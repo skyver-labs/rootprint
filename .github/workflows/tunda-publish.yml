@@ -20,7 +20,9 @@ name: Publish Tunda image
 
 on:
   push:
-    branches: ['tunda/**']
+    # `main` because it is this fork's mainline once Phase 1 merges, and
+    # `tunda/**` so a branch is publishable before it lands.
+    branches: [main, 'tunda/**']
     tags: ['tunda-v*']
   workflow_dispatch:
     inputs:
@@ -87,10 +89,14 @@ jobs:
           # whatever upstream's release.yml pushes, and an operator reading
           # `ghcr.io/skyver-labs/rootprint:latest` should not have to work out
           # which of two identity models they just deployed.
+          # `tunda-edge` follows main and nothing else. A feature branch gets its
+          # commit tag only: two branches both writing a moving tag race, and the
+          # winner is whichever workflow finished last — which is not a property
+          # anybody should have to reason about when deciding what is deployed.
           tags: |
             type=semver,pattern=tunda-{{version}},enable=${{ startsWith(github.ref, 'refs/tags/tunda-v') }}
             type=raw,value=tunda-latest,enable=${{ startsWith(github.ref, 'refs/tags/tunda-v') }}
-            type=raw,value=tunda-edge,enable=${{ startsWith(github.ref, 'refs/heads/tunda/') }}
+            type=raw,value=tunda-edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=tunda-${{ inputs.tag }},enable=${{ inputs.tag != '' }}
             type=sha,prefix=tunda-sha-
           labels: |
