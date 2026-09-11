@@ -99,6 +99,7 @@ a change nobody decided.
 | `apps/api/src/tunda/issuers.ts`                 | The closed set of trusted Tunda issuers, per-tenant config, JWKS cache                                                       |
 | `apps/api/src/tunda/human-token.ts`             | ES256 verification: pinned algorithm, exact issuer, audience, bounded skew, required claims                                  |
 | `apps/api/src/tunda/oidc.ts`                    | Auth transactions, PKCE, code exchange, serialized refresh                                                                   |
+| `apps/api/src/tunda/id-token.ts`                | ID token verification: the nonce this console stores and used not to check, `at_hash`, and the `name` claim `profile` grants |
 | `apps/api/src/tunda/sessions.ts`                | The opaque `__Host-` session, envelope-encrypted token custody                                                               |
 | `apps/api/src/tunda/crypto.ts`                  | SHA-256 for values only ever compared, AES-256-GCM envelope encryption for Tunda's tokens, one CSPRNG for every opaque value |
 | `apps/api/src/tunda/csrf.ts`                    | Origin and token checks for cookie-authenticated writes                                                                      |
@@ -107,6 +108,7 @@ a change nobody decided.
 | `apps/api/src/tunda/machine-token.ts`           | A producer's `client_credentials` token: signed destinations, per-signal scopes, no session                                  |
 | `apps/api/src/tunda/client-assertion.ts`        | private_key_jwt: a fresh, single-use signed assertion per back-channel call, instead of a shared secret                      |
 | `apps/api/src/tunda/no-local-authority.test.ts` | The central property, asserted: table shapes, sealed columns, the size of the authentication surface                         |
+| `apps/api/src/tunda/id-token.test.ts`           | Thirteen tokens this console refuses, each named for the check it fails                                                      |
 | `apps/api/src/middleware/require-machine.ts`    | Bearer → verified producer, on the ingest paths only                                                                         |
 | `apps/api/src/middleware/authorize.ts`          | Phase 1: authenticated is authorized, stated as such. Phase 2: the PDP call                                                  |
 | `apps/api/src/routes/ingest/destination.ts`     | The header a producer picks among the destinations its token already grants                                                  |
