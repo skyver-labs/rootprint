@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import { claimRefresh, releaseRefreshClaim } from './sessions.js';
+// Every import of application code in this file is dynamic and inside a test.
+//
+// A module-scope `import … from './sessions.js'` defeats the guard below: the
+// import chain reaches the configuration module, which refuses to load without
+// DATABASE_URL, and it does that while the file is being evaluated — before
+// `describe.skip` has had a chance to skip anything. CI proved it, by failing on
+// a suite that was supposed to be skipped.
 
 /**
  * Exactly one request per session may refresh it.
@@ -78,6 +84,8 @@ describeWithDatabase('the refresh claim', () => {
 	test('is granted to exactly one of several simultaneous requests', async () => {
 		// The case that used to end sessions. Eight concurrent claims, one winner —
 		// asserted against the database because that is where the exclusion lives.
+		const { claimRefresh } = await import('./sessions.js');
+
 		await withSession(async (sessionId) => {
 			const claims = await Promise.all(Array.from({ length: 8 }, () => claimRefresh(sessionId)));
 
@@ -86,6 +94,8 @@ describeWithDatabase('the refresh claim', () => {
 	});
 
 	test('is available again once the winner releases it', async () => {
+		const { claimRefresh, releaseRefreshClaim } = await import('./sessions.js');
+
 		await withSession(async (sessionId) => {
 			expect(await claimRefresh(sessionId)).toBe(true);
 			expect(await claimRefresh(sessionId)).toBe(false);
@@ -100,6 +110,8 @@ describeWithDatabase('the refresh claim', () => {
 		// A process that dies mid-refresh holds the claim. Without expiry this
 		// session could never refresh again — a worse failure than the reuse the
 		// claim prevents, because it is permanent.
+		const { claimRefresh } = await import('./sessions.js');
+
 		await withSession(async (sessionId) => {
 			const { db } = await import('../lib/db.js');
 			const { consoleSession } = await import('./schema.js');
@@ -115,6 +127,8 @@ describeWithDatabase('the refresh claim', () => {
 	});
 
 	test('is refused on a session that has ended', async () => {
+		const { claimRefresh } = await import('./sessions.js');
+
 		await withSession(async (sessionId) => {
 			const { db } = await import('../lib/db.js');
 			const { consoleSession } = await import('./schema.js');
