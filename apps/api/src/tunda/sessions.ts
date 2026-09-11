@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 
 import { db } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
@@ -263,6 +263,125 @@ export async function storeRotatedTokens(
 			authTime: token.authTime,
 			tundaSid: token.sessionId
 		})
+		.where(eq(consoleSession.id, sessionId));
+}
+
+/**
+ * How long a refresh claim stays valid before another request may take it.
+ *
+ * Longer than a healthy refresh (one HTTP round trip to Tunda) and far shorter
+ * than a session. A process that dies holding a claim blocks this session's
+ * refreshes until this elapses, and a session that can never refresh again is a
+ * worse failure than the one the claim prevents.
+ */
+const REFRESH_CLAIM_TTL_MS = 30 * 1000;
+
+/** How long a request that lost the claim waits for the winner before giving up. */
+const REFRESH_WAIT_MS = 2000;
+
+/** How often it looks. */
+const REFRESH_POLL_MS = 50;
+
+/**
+ * Claims the exclusive right to refresh this session, or reports that somebody else has it.
+ *
+ * One conditional `UPDATE`, so the check and the claim cannot be separated by
+ * another request doing the same thing. The alternative — read, decide, write —
+ * has a window between the read and the write in which two requests both decide
+ * they may refresh, which is exactly the concurrency this exists to remove.
+ */
+export async function claimRefresh(sessionId: string, now = new Date()): Promise<boolean> {
+	const stale = new Date(now.getTime() - REFRESH_CLAIM_TTL_MS);
+
+	const claimed = await db
+		.update(consoleSession)
+		.set({ refreshingAt: now })
+		.where(
+			and(
+				eq(consoleSession.id, sessionId),
+				isNull(consoleSession.endedAt),
+				or(isNull(consoleSession.refreshingAt), lt(consoleSession.refreshingAt, stale))
+			)
+		)
+		.returning({ id: consoleSession.id });
+
+	return claimed.length > 0;
+}
+
+/** Releases the claim, whatever the outcome. */
+export async function releaseRefreshClaim(sessionId: string): Promise<void> {
+	await db
+		.update(consoleSession)
+		.set({ refreshingAt: null })
+		.where(eq(consoleSession.id, sessionId));
+}
+
+/**
+ * Waits for whoever holds the claim to finish, and reports what they achieved.
+ *
+ * Returns the session once its access token has moved on — which is the only
+ * observable difference between "the winner is still working" and "the winner
+ * succeeded". Returns `null` if the session ended while waiting, which is what a
+ * failed refresh looks like from here.
+ *
+ * Bounded, and the bound is short. A caller that waits too long turns one slow
+ * refresh into a slow page; a caller that does not wait at all sends a request
+ * onward with a token that may already have expired.
+ */
+export async function awaitRefresh(
+	sessionId: string,
+	previousExpiry: Date,
+	deadlineMs = REFRESH_WAIT_MS
+): Promise<'refreshed' | 'ended' | 'timeout'> {
+	const until = Date.now() + deadlineMs;
+
+	while (Date.now() < until) {
+		await new Promise((resolve) => setTimeout(resolve, REFRESH_POLL_MS));
+
+		const [row] = await db
+			.select({
+				endedAt: consoleSession.endedAt,
+				accessExpiresAt: consoleSession.accessExpiresAt
+			})
+			.from(consoleSession)
+			.where(eq(consoleSession.id, sessionId))
+			.limit(1);
+
+		if (!row || row.endedAt !== null) {
+			return 'ended';
+		}
+		if (row.accessExpiresAt.getTime() > previousExpiry.getTime()) {
+			return 'refreshed';
+		}
+	}
+
+	return 'timeout';
+}
+
+/**
+ * Stores a rotated refresh token on its own, without the rest of a successful refresh.
+ *
+ * ## Why this exists separately from `storeRotatedTokens`
+ *
+ * Because Tunda rotates the family the moment it answers, and it answers before
+ * this console has verified anything. If verification then fails — a missing
+ * claim, clock skew past the tolerance — the old code threw, stored nothing, and
+ * left the spent token in the row. The next request presented that spent token,
+ * Tunda saw a consumed token presented twice, and revoked the whole family as
+ * reuse.
+ *
+ * So the rotation is recorded even when the response is unusable. Nothing about
+ * the session is extended: the access token, its expiry and the assurance are all
+ * left alone, because none of them was verified. This writes down one fact that
+ * is true regardless — the token in the row is spent and this is its successor.
+ */
+export async function storeRotatedRefreshToken(
+	sessionId: string,
+	refreshToken: string
+): Promise<void> {
+	await db
+		.update(consoleSession)
+		.set({ refreshTokenEnc: await seal(refreshToken) })
 		.where(eq(consoleSession.id, sessionId));
 }
 
