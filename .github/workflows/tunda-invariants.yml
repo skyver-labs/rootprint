@@ -22,7 +22,19 @@ on:
   workflow_call:
 
 concurrency:
-  group: tunda-invariants-${{ github.ref }}
+  # `github.workflow` is in the key because this runs two ways on the same ref: on
+  # its own from a push, and as the gate `tunda-publish.yml` calls. Keyed on the
+  # ref alone the two collide, and one cancels the other — which is what happened
+  # on the first real run: the gating copy passed and published an image while the
+  # standalone copy showed a red ✗ on the same commit.
+  #
+  # It fails safe either way, since a cancelled gate fails `needs:` and publishes
+  # nothing. The cost is worse than a wrong answer: a CI signal that is red when
+  # everything is correct is one people stop reading.
+  #
+  # In a called workflow `github.workflow` is the CALLER's name, so the gate and
+  # the standalone run land in different groups.
+  group: tunda-invariants-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
