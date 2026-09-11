@@ -18,10 +18,15 @@ export const config = {
 	// `signal:environment:index` destinations. A token issued for `staging` resolves
 	// no destination here when this says `production`, so the batch is refused.
 	//
-	// The default is `development` rather than `production` because that is the
+	// One of `production`, `staging`, `sandbox`. Tunda fixes that set in a database
+	// check constraint, so anything else here can never match a real grant and would
+	// refuse every batch — silently, from the producer's side. This started as
+	// `development`, which is exactly that mistake.
+	//
+	// The default is `sandbox` rather than `production` because that is the
 	// fail-closed direction: a production console that was never configured refuses
-	// writes, instead of accepting a staging producer's batch into a production index.
-	environment: process.env.TUNDA_ENVIRONMENT || 'development',
+	// writes, instead of accepting a sandbox producer's batch into a production index.
+	environment: process.env.TUNDA_ENVIRONMENT || 'sandbox',
 	frontendUrl: optionalUrlEnv('FRONTEND_URL'),
 	port: intEnv('PORT', 8282),
 	trustedProxyHops: intEnv('TRUST_PROXY_HOPS', 0),

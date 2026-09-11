@@ -143,7 +143,12 @@ export const authRouter = new Hono<AppEnv>()
 					const parameters = new URLSearchParams({
 						id_token_hint: idToken,
 						client_id: issuer.clientId,
-						post_logout_redirect_uri: `${issuer.redirectUri.replace(/\/api\/auth\/callback$/, '')}/signed-out`
+						// `/auth/signed-out`, which is where the SPA actually serves the page.
+						// Derived from the redirect URI rather than configured separately, so
+						// the two cannot disagree — but the path has to be the real one, and
+						// `/signed-out` merely fell through the catch-all to index.html and
+						// then bounced the browser back into a sign-in.
+						post_logout_redirect_uri: `${issuer.redirectUri.replace(/\/api\/auth\/callback$/, '')}/auth/signed-out`
 					});
 					redirectTo = `${issuer.issuer}/connect/logout?${parameters.toString()}`;
 				}

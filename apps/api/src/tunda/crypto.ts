@@ -41,6 +41,22 @@ async function envelopeKey(): Promise<CryptoKey> {
 	return cachedKey;
 }
 
+/**
+ * Proves the key is present and usable, at boot.
+ *
+ * <p>Without this the key is read on the first {@link seal} — which is the first
+ * sign-in. A deployment missing it therefore starts, reports healthy, serves the
+ * login redirect, and fails at the callback with a stack trace, for every user.
+ * That is a configuration error presenting as an outage an hour after the deploy
+ * that caused it.
+ *
+ * Called before the database is touched, so a misconfigured console refuses to
+ * start rather than migrating a schema it is not going to be able to use.
+ */
+export async function verifyEnvelopeKey(): Promise<void> {
+	await envelopeKey();
+}
+
 /** Encrypts a token for storage. The nonce is fresh per call and never reused. */
 export async function seal(plaintext: string): Promise<Buffer> {
 	const key = await envelopeKey();

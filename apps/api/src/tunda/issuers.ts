@@ -35,6 +35,24 @@ export type TundaIssuer = {
 	 */
 	readonly issuer: string;
 
+	/**
+	 * Where this console reaches Tunda for server-to-server calls — the token
+	 * endpoint and the JWKS.
+	 *
+	 * Defaults to {@link issuer} and is usually the same string. It exists because
+	 * an issuer is an *identifier* and an endpoint is a *location*, and in a real
+	 * deployment they differ: the public issuer is `https://id.example.com/t/…`
+	 * while the console reaches the node inside a mesh at
+	 * `http://tunda-node.identity.svc`. Forcing the back channel through the public
+	 * name puts egress, TLS termination and a public DNS lookup on the path that
+	 * verifies every token.
+	 *
+	 * It changes where bytes are fetched from and never what `iss` must equal. The
+	 * browser-facing URLs — authorize, and RP-initiated logout — always use
+	 * {@link issuer}, because those are addresses a person's browser resolves.
+	 */
+	readonly internalIssuer: string;
+
 	readonly clientId: string;
 	readonly clientSecret: string;
 
@@ -73,20 +91,57 @@ const JWKS_CACHE_MS = 5 * 60 * 1000;
  */
 const JWKS_COOLDOWN_MS = 60 * 1000;
 
+/**
+ * The one value that has to be right.
+ *
+ * `TUNDA_ISSUER` is the **complete** issuer, exactly as it appears in a token's
+ * `iss` claim — `https://id.example.com/t/tnt_01K3ST…`, not the origin.
+ *
+ * It used to be the origin, with `/t/{TUNDA_TENANT_ID}` appended here. Two
+ * variables composed into the string that actually gets compared, which meant
+ * the value nobody configured directly was the only one that mattered, and
+ * setting `TUNDA_ISSUER` to the thing it is named after produced a doubled path
+ * and a flat "issuer is not configured" on every token. Nothing consumed the
+ * tenant id separately, so the composition bought nothing and cost that.
+ *
+ * Now there is one source of truth, compared verbatim, and the tenant is read
+ * back out of it.
+ */
 function buildIssuer(): TundaIssuer {
-	const issuerBase = requireUrlEnv('TUNDA_ISSUER').replace(/\/+$/, '');
-	const tenantId = requireEnv('TUNDA_TENANT_ID');
-	const issuer = `${issuerBase}/t/${tenantId}`;
+	const issuer = requireUrlEnv('TUNDA_ISSUER').replace(/\/+$/, '');
+
+	// `/t/{tenantId}` is the tenant-issuer shape every Tunda issuer has. Refused
+	// rather than defaulted: an issuer without it is either a misconfiguration or
+	// a different product, and guessing at the tenant would mean this console
+	// silently believed it was serving one it was not.
+	const tenantId = /\/t\/([^/]+)$/.exec(issuer)?.[1];
+	if (tenantId === undefined) {
+		throw new Error(
+			`TUNDA_ISSUER must be a full tenant issuer ending in /t/{tenantId}, e.g.` +
+				` https://id.example.com/t/tnt_01K3ST0000E008000000000081 — got '${issuer}'.`
+		);
+	}
+
+	// Same shape as `issuer`, so a mesh address that forgot the tenant path fails
+	// here rather than 404ing at the first token exchange.
+	const internalIssuer = (process.env['TUNDA_INTERNAL_ISSUER'] ?? issuer).replace(/\/+$/, '');
 
 	return {
 		tenantId,
+		internalIssuer,
 		issuer,
 		clientId: requireEnv('TUNDA_CLIENT_ID'),
 		clientSecret: requireEnv('TUNDA_CLIENT_SECRET'),
 		audience: requireEnv('TUNDA_AUDIENCE'),
 		scopes: ['openid', 'profile', 'offline_access', 'observability.read'],
 		redirectUri: requireEnv('TUNDA_REDIRECT_URI'),
-		jwks: createRemoteJWKSet(new URL(`${issuer}/oauth2/jwks`), {
+		// Fetched from the internal address. See `internalIssuer` above — and note
+		// that in this repository's own development stack the two genuinely differ:
+		// the issuer is `id.tunda.localhost`, and `.localhost` is loopback by
+		// RFC 6761, so Bun's `fetch` short-circuits it before DNS is consulted and
+		// a container that resolves the name correctly still connects to itself.
+		// The symptom was a bare `TypeError` on every token.
+		jwks: createRemoteJWKSet(new URL(`${internalIssuer}/oauth2/jwks`), {
 			cacheMaxAge: JWKS_CACHE_MS,
 			cooldownDuration: JWKS_COOLDOWN_MS
 		})

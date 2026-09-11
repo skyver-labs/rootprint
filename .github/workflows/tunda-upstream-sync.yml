@@ -1,0 +1,285 @@
+name: Upstream sync
+
+# Opens a pull request when upstream publishes a release.
+#
+# WHY TAGS AND NOT `main`
+#
+# FORK.md says it and this enforces it: upstream is pre-1.0 and warns of breaking
+# changes between releases. Following `main` would mean a PR per commit, each one
+# a merge of work that upstream itself has not finished — and a fork that merges
+# unreleased work inherits bugs nobody has found yet.
+#
+# WHAT MAKES THIS MORE THAN A `git merge` ON A TIMER
+#
+# The fork's divergence is *registered*: FORK.md lists which upstream files were
+# deliberately removed, and says the resolution for a conflict in one of them is
+# to remove it again. That is a mechanical rule, so this workflow applies it —
+# and, more importantly, it reports which conflicts it could NOT resolve that way,
+# because those are the ones that represent upstream changing something the fork
+# actually depends on.
+#
+# A merge conflict in `apps/api/src/lib/auth.ts` is noise: the file is gone on
+# purpose and upstream edited it. A merge conflict in `apps/api/src/app.ts` is a
+# person's afternoon. Sorting those two is the whole value here.
+
+on:
+  schedule:
+    # Mondays, 06:00 UTC. Weekly rather than nightly because upstream releases
+    # every few weeks and a daily job that finds nothing 95% of the time is a job
+    # whose failures nobody reads.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream tag to merge (default: the newest unmerged one)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: tunda-upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/rootprint/rootprint.git
+  BASE_BRANCH: main
+
+jobs:
+  sync:
+    name: Merge upstream release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, or `git merge-base --is-ancestor` below cannot tell an
+          # already-merged tag from a new one and every run reopens the same PR.
+          fetch-depth: 0
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream "$UPSTREAM" 2>/dev/null || git remote set-url upstream "$UPSTREAM"
+          git fetch upstream --tags --quiet
+
+      - name: Choose a release to merge
+        id: choose
+        run: |
+          set -euo pipefail
+
+          if [ -n "${{ inputs.tag }}" ]; then
+            candidates="${{ inputs.tag }}"
+          else
+            # Semver order, not commit date: upstream may tag a patch on an older
+            # line after a minor, and merging in date order would apply them
+            # backwards.
+            candidates=$(git tag -l 'v*' --sort=version:refname | tr '\n' ' ')
+          fi
+
+          target=""
+          for tag in $candidates; do
+            # Already in this branch's history? Then it is merged, whatever the
+            # tag list says.
+            if git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+              continue
+            fi
+            target="$tag"
+          done
+
+          if [ -z "$target" ]; then
+            echo "Nothing unmerged upstream."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "found=true"        >> "$GITHUB_OUTPUT"
+          echo "tag=$target"       >> "$GITHUB_OUTPUT"
+          echo "branch=upstream/$target" >> "$GITHUB_OUTPUT"
+          echo "Selected $target"
+
+      - name: Skip if a pull request is already open for it
+        id: existing
+        if: steps.choose.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          open=$(gh pr list --state open --head "${{ steps.choose.outputs.branch }}" --json number --jq 'length')
+          echo "open=$open" >> "$GITHUB_OUTPUT"
+          [ "$open" = "0" ] || echo "PR already open for ${{ steps.choose.outputs.tag }}; nothing to do."
+
+      - name: Merge, and resolve what the register says is mechanical
+        id: merge
+        if: steps.choose.outputs.found == 'true' && steps.existing.outputs.open == '0'
+        run: |
+          set -uo pipefail
+
+          git config user.name  "tunda-upstream-sync[bot]"
+          git config user.email "noreply@tunda.africa"
+          git checkout -b "${{ steps.choose.outputs.branch }}"
+
+          if git merge --no-edit --no-ff "${{ steps.choose.outputs.tag }}" > /tmp/merge.log 2>&1; then
+            echo "outcome=clean" >> "$GITHUB_OUTPUT"
+            : > /tmp/registered.txt
+            : > /tmp/unregistered.txt
+          else
+            echo "outcome=conflict" >> "$GITHUB_OUTPUT"
+
+            # The register's own rule, applied. A conflict in a path FORK.md lists
+            # as removed means upstream edited a file this fork deleted on
+            # purpose; the resolution is to delete it again.
+            #
+            # Matched against the *table* rather than the whole document, so a
+            # path that merely appears in a sentence of prose is not treated as a
+            # deletion instruction.
+            git diff --name-only --diff-filter=U | sort > /tmp/conflicts.txt
+
+            : > /tmp/registered.txt
+            : > /tmp/unregistered.txt
+            while read -r path; do
+              [ -n "$path" ] || continue
+              if awk '/^### Removed/,/^### Added/' FORK.md | grep -qF -- "$path"; then
+                git rm -q --ignore-unmatch -r -- "$path" 2>/dev/null || true
+                echo "$path" >> /tmp/registered.txt
+              else
+                echo "$path" >> /tmp/unregistered.txt
+              fi
+            done < /tmp/conflicts.txt
+
+            # Only commit the merge when every conflict was mechanical. Leaving a
+            # half-resolved merge committed would hand somebody a branch that
+            # looks finished and is not.
+            if [ ! -s /tmp/unregistered.txt ]; then
+              git commit -q --no-edit
+              echo "outcome=resolved" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          {
+            echo "registered<<EOF"; cat /tmp/registered.txt;   echo "EOF"
+            echo "unregistered<<EOF"; cat /tmp/unregistered.txt; echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run the fork's checks against the merge
+        id: verify
+        if: steps.merge.outputs.outcome == 'clean' || steps.merge.outputs.outcome == 'resolved'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          status=0
+          : > /tmp/verify.md
+
+          run() {
+            name="$1"; shift
+            if "$@" > /tmp/step.log 2>&1; then
+              echo "| \`$name\` | ✅ |" >> /tmp/verify.md
+            else
+              echo "| \`$name\` | ❌ |" >> /tmp/verify.md
+              status=1
+            fi
+          }
+
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+
+          run "bun install"    bun install --frozen-lockfile
+          run "bun run check"  bun run check
+          run "bun run lint"   bun run lint
+          run "format:check"   bun run format:check
+          run "api test"       bun --filter api test
+
+          echo "verified=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Push the branch
+        if: steps.merge.outputs.outcome != ''
+        run: |
+          # Conflicted merges are pushed too, with the conflict markers in the
+          # tree. That is deliberate: the alternative is a workflow that finds a
+          # hard merge and silently does nothing, which is how a fork falls six
+          # releases behind without anybody deciding to.
+          git add -A
+          git diff --cached --quiet || git commit -q -m "Merge ${{ steps.choose.outputs.tag }} (conflicts unresolved)"
+          git push --force-with-lease origin "${{ steps.choose.outputs.branch }}"
+
+      - name: Open the pull request
+        if: steps.merge.outputs.outcome != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          tag="${{ steps.choose.outputs.tag }}"
+          outcome="${{ steps.merge.outputs.outcome }}"
+
+          {
+            echo "Merges upstream [\`$tag\`](https://github.com/rootprint/rootprint/releases/tag/$tag) into the fork."
+            echo
+            case "$outcome" in
+              clean)
+                echo "### Merged cleanly"
+                echo
+                echo "No conflicts. The fork's divergence and this release do not overlap." ;;
+              resolved)
+                echo "### Merged, conflicts resolved from the register"
+                echo
+                echo "Every conflict was in a file FORK.md lists as **removed**, so each was removed again — which is the resolution FORK.md specifies. Nothing here needed a judgement call, but the list is worth reading: a file upstream keeps editing is a file worth offering them a seam for."
+                echo
+                echo '```'
+                echo "${{ steps.merge.outputs.registered }}"
+                echo '```' ;;
+              conflict)
+                echo "### ⚠️ Conflicts a person has to resolve"
+                echo
+                echo "These paths are **not** in FORK.md's removed table, so upstream has changed something this fork actually builds on. Conflict markers are in the tree."
+                echo
+                echo '```'
+                echo "${{ steps.merge.outputs.unregistered }}"
+                echo '```'
+                echo
+                if [ -n "${{ steps.merge.outputs.registered }}" ]; then
+                  echo "<details><summary>Also conflicted, and mechanical — remove them again</summary>"
+                  echo
+                  echo '```'
+                  echo "${{ steps.merge.outputs.registered }}"
+                  echo '```'
+                  echo
+                  echo "</details>"
+                fi ;;
+            esac
+
+            echo
+            if [ -f /tmp/verify.md ]; then
+              echo "### Checks"
+              echo
+              echo "| Step | |"
+              echo "|---|---|"
+              cat /tmp/verify.md
+              echo
+              echo "The Tunda invariants run separately on this PR. A green merge that fails them is a merge that put the second identity system back."
+            else
+              echo "_Checks not run: the merge did not complete._"
+            fi
+
+            echo
+            echo "---"
+            echo
+            echo "Opened by \`.github/workflows/tunda-upstream-sync.yml\`. Resolution procedure: [FORK.md](../blob/main/FORK.md#merging-from-upstream)."
+          } > /tmp/body.md
+
+          case "$outcome" in
+            clean)    labels="upstream-sync" ;;
+            resolved) labels="upstream-sync" ;;
+            *)        labels="upstream-sync,needs-human" ;;
+          esac
+
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "${{ steps.choose.outputs.branch }}" \
+            --title "Merge upstream $tag" \
+            --body-file /tmp/body.md \
+            --label "$labels" || \
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "${{ steps.choose.outputs.branch }}" \
+            --title "Merge upstream $tag" \
+            --body-file /tmp/body.md

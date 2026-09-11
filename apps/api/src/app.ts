@@ -34,6 +34,7 @@ import type { ApiErrorBody } from './types.js';
 import { HttpError } from './utils/http-error.js';
 import { quickwitErrorToHttp } from './utils/quickwit-error.js';
 import { Code, otlpError, otlpErrorFromHttpError } from './utils/otlp-response.js';
+import { verifyEnvelopeKey } from './tunda/crypto.js';
 import { initIssuers } from './tunda/issuers.js';
 import { startStatsCollector } from './services/index-stats.service.js';
 import { buildSpec } from './lib/openapi/spec.js';
@@ -197,14 +198,25 @@ app.get('*', serveStatic({ path: 'index.html', root: webRoot }));
 
 async function main(): Promise<void> {
 	logger.info('booting api');
+
+	// Configuration first, before the database and before the listener.
+	//
+	// Both of these throw on a missing or malformed value, and both are fatal.
+	// A console without a configured Tunda issuer has no authentication authority
+	// at all; one without a session key cannot read back a session it wrote. The
+	// only safe thing either can do with a request is refuse it, so it does not
+	// boot.
+	//
+	// Ordered before `connectDb()` deliberately. These checks cost nothing and
+	// cannot fail transiently, so running them first means a misconfigured
+	// deployment names the missing variable instead of migrating a database it
+	// will not be able to serve — and instead of coming up healthy and failing at
+	// the first callback, which is what a lazily-read key produces.
+	initIssuers();
+	await verifyEnvelopeKey();
+
 	await connectDb();
 	await runMigrations();
-
-	// Before the listener, and fatal if it throws. A console that boots without a
-	// configured Tunda issuer has no authentication authority at all, and the only
-	// safe thing it can do with a request is refuse it — so it does not boot.
-	initIssuers();
-
 	await probeQuickwit();
 
 	const statsCollector = startStatsCollector(db, quickwit);

@@ -73,7 +73,8 @@ Then:
 Configuration this fork requires and upstream does not:
 
 ```text
-TUNDA_ISSUER            the tenant issuer, e.g. https://id.example.com/t/tnt_…
+TUNDA_ISSUER            the COMPLETE tenant issuer, as a token's `iss` carries
+                        it: https://id.example.com/t/tnt_…  (not an origin)
 TUNDA_CLIENT_ID         this console's registration
 TUNDA_CLIENT_SECRET     until private_key_jwt is available
 TUNDA_REDIRECT_URI      …/api/auth/callback

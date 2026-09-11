@@ -17,6 +17,9 @@ on:
     branches: [main, 'tunda/**']
   pull_request:
     branches: [main]
+  # Called as a gate by `tunda-publish.yml`, so a failing invariant produces no
+  # image rather than a red tick beside a green one.
+  workflow_call:
 
 concurrency:
   group: tunda-invariants-${{ github.ref }}

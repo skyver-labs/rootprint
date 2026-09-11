@@ -195,7 +195,10 @@ export class GrantRejected extends Error {
 }
 
 async function exchange(issuer: TundaIssuer, body: Record<string, string>): Promise<TundaTokens> {
-	const response = await fetch(`${issuer.issuer}/oauth2/token`, {
+	// The internal address, not the public issuer: this is a back-channel call.
+	// `authorizeUrl` above deliberately uses the public one, because that is a URL
+	// a person's browser has to resolve.
+	const response = await fetch(`${issuer.internalIssuer}/oauth2/token`, {
 		method: 'POST',
 		headers: {
 			'content-type': 'application/x-www-form-urlencoded',

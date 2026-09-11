@@ -111,6 +111,8 @@ a change nobody decided.
 | `apps/api/src/drizzle/0022`, `0023`             | `console_*` created and every local identity table dropped, including the secrets in `app_settings`                          |
 | `apps/web/src/lib/api/session.ts`               | What the browser knows about who is signed in — for rendering, and for nothing else                                          |
 | `apps/web/src/routes/auth/signed-out/`          | The one page left under `/auth`                                                                                              |
+| `.github/workflows/tunda-publish.yml`           | The fork's GHCR image, gated on the invariants so a failing check publishes nothing                                          |
+| `.github/workflows/tunda-upstream-sync.yml`     | Opens a PR per upstream release, resolving what this register calls mechanical and naming what is not                        |
 
 ### Changed in place — and why each was unavoidable
 
@@ -130,6 +132,9 @@ a change nobody decided.
 | `apps/web/src/lib/settings-nav.ts`                      | Five destinations removed; `adminOnly` removed with the role it read                                                 |
 | `apps/web/.../send-telemetry/**`                        | The wizard shows a placeholder token and explains where a real one comes from                                        |
 | `README.md`                                             | The banner, and the two sections that told people to create an admin account and mint an ingest key                  |
+| `docker-compose.yml`, `.env.example`                    | The Tunda variables, all required; the Better Auth ones removed                                                      |
+| `apps/api/src/app.ts` — boot order                      | Configuration is validated before the database, so a missing variable names itself                                   |
+| `.github/workflows/tunda-invariants.yml`                | Also `workflow_call`, so the publish workflow can gate on it                                                         |
 
 ---
 
@@ -205,3 +210,14 @@ A fork that stops running upstream's checks has stopped being a fork.
 
 Resolve conflicts by re-applying the register above: if a conflict is in a file
 this document lists as _removed_, the resolution is to remove it again.
+
+**`.github/workflows/tunda-upstream-sync.yml` does the mechanical half.** Weekly,
+it finds the newest unmerged upstream tag, attempts the merge, and applies exactly
+that rule — anything conflicting in the Removed table is removed again. What it
+cannot resolve it leaves in the tree with the markers in place and labels the pull
+request `needs-human`, because a conflict outside the register means upstream has
+changed something this fork genuinely builds on, and that is a judgement rather
+than a procedure.
+
+It opens a PR either way. A workflow that found a hard merge and quietly did
+nothing is how a fork ends up six releases behind without anybody deciding to.

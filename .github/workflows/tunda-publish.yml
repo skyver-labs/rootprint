@@ -1,0 +1,138 @@
+name: Publish Tunda image
+
+# The fork's own image, which is a different artifact from upstream's.
+#
+# `release.yml` is upstream's and is left alone: it triggers on `main` and `v*`,
+# this triggers on `tunda/**` and `tunda-v*`, and the two never publish the same
+# tag. Editing upstream's in place would have made every future merge conflict on
+# a file whose changes are ours, for no gain.
+#
+# WHY THIS GATES ON THE INVARIANTS
+#
+# The property this fork exists to establish is that no code path can produce a
+# session from anything other than a live Tunda authentication. A published image
+# is the form in which that property either holds or does not for anyone running
+# it — and an image built from a commit where Better Auth crept back in is the
+# one artifact nobody would inspect before deploying.
+#
+# So the invariants are a *gate*, not a parallel job: `needs: invariants` means a
+# failing check produces no image rather than a red tick beside a green one.
+
+on:
+  push:
+    branches: ['tunda/**']
+    tags: ['tunda-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Extra tag to publish under (e.g. demo)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  # For the build provenance attestation below.
+  id-token: write
+  attestations: write
+
+concurrency:
+  # Not cancel-in-progress. A cancelled push half-way through a registry upload
+  # can leave a manifest referencing blobs that the next run garbage-collects.
+  group: tunda-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  invariants:
+    name: Invariants
+    uses: ./.github/workflows/tunda-invariants.yml
+
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run lint
+      - run: bun run format:check
+      - run: bun --filter api test
+
+  publish:
+    name: Build & push
+    runs-on: ubuntu-latest
+    needs: [invariants, checks]
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # `tunda-` on every tag, deliberately. The registry path is shared with
+          # whatever upstream's release.yml pushes, and an operator reading
+          # `ghcr.io/skyver-labs/rootprint:latest` should not have to work out
+          # which of two identity models they just deployed.
+          tags: |
+            type=semver,pattern=tunda-{{version}},enable=${{ startsWith(github.ref, 'refs/tags/tunda-v') }}
+            type=raw,value=tunda-latest,enable=${{ startsWith(github.ref, 'refs/tags/tunda-v') }}
+            type=raw,value=tunda-edge,enable=${{ startsWith(github.ref, 'refs/heads/tunda/') }}
+            type=raw,value=tunda-${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=sha,prefix=tunda-sha-
+          labels: |
+            org.opencontainers.image.title=Rootprint (Tunda fork)
+            org.opencontainers.image.description=Observability console for the Tunda Identity Platform. Authentication is Tunda's; this console issues no credential.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/FORK.md
+            africa.tunda.fork.upstream=https://github.com/rootprint/rootprint
+
+      - uses: docker/build-push-action@v7
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # An SBOM and provenance on every push. This image carries an identity
+          # model rather than only a log viewer, so "what is actually in the thing
+          # I deployed" is a question somebody will ask under audit — and the
+          # answer has to have been recorded at build time.
+          sbom: true
+          provenance: mode=max
+
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo
+            echo "Built only because the Tunda invariants passed. See [FORK.md](../blob/main/FORK.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
