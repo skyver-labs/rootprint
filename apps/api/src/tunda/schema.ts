@@ -172,6 +172,84 @@ export const consoleAuthTransaction = pgTable('console_auth_transaction', {
 	usedAt: timestamp('used_at', { withTimezone: true })
 });
 
+/**
+ * What the PDP decided, and what this console did about it.
+ *
+ * ## Why this table exists rather than a log line
+ *
+ * Because the `AUDIT` obligation is a condition of the permit, not a nicety.
+ * `authorization.proto` says an obligation the caller does not enforce makes the
+ * decision an authorization failure — so a permit carrying `AUDIT` is only valid
+ * if a record was written, and a record that went to stdout is one a log rotation
+ * removes. `pdp.ts` refuses any permit whose obligations it cannot honour, and
+ * this row is how `AUDIT` is honoured.
+ *
+ * ## What it is not
+ *
+ * It is not the platform's audit trail and does not try to be. Tunda writes its
+ * own evidence row for every decision, keyed by `decision_id`, and that one is
+ * authoritative — this one says what *this console* did with the answer, which is
+ * the half Tunda cannot see. The two are joined on `decision_id` during an
+ * investigation, which is why it is stored even on a denial.
+ *
+ * ## Denials are recorded too
+ *
+ * Including the ones the PDP never answered. "Nobody could search anything for
+ * four minutes" is a fact worth having, and it is invisible if only permits are
+ * written. It also makes the absence of a row unambiguous: a request that reached
+ * an authorized route either produced one or never happened.
+ */
+export const consoleAuthorization = pgTable(
+	'console_authorization',
+	{
+		id: text('id').primaryKey(),
+
+		decidedAt: timestamp('decided_at', { withTimezone: true }).defaultNow().notNull(),
+
+		/**
+		 * The console principal, when there was one.
+		 *
+		 * Not a foreign key. A decision record that could be removed by deleting the
+		 * principal it is about is not a record, and the principal row is a cache a
+		 * future cleanup may legitimately prune.
+		 */
+		principalId: text('principal_id'),
+
+		/** The Tunda subject and tenant the decision was actually made about. */
+		tundaTenantId: text('tunda_tenant_id').notNull(),
+		tundaUserId: text('tunda_user_id').notNull(),
+
+		action: text('action').notNull(),
+		resourceType: text('resource_type').notNull(),
+		resourceId: text('resource_id'),
+
+		/** `PERMIT`, `DENY` or `CHALLENGE`, as this console acted on it. */
+		decision: text('decision').$type<'PERMIT' | 'DENY' | 'CHALLENGE'>().notNull(),
+
+		/** The PDP's stable reason, or this console's when the PDP did not answer. */
+		reasonCode: text('reason_code').notNull(),
+
+		/**
+		 * The platform's own evidence row for this decision.
+		 *
+		 * Null when the PDP never answered — a timeout has no decision id, and
+		 * inventing one would make an outage look like a decision.
+		 */
+		decisionId: text('decision_id'),
+
+		/** The assurance the decision was made against, as the token asserted it. */
+		acr: text('acr').notNull(),
+
+		/** Correlates with the platform's logs for the same request. */
+		traceId: text('trace_id')
+	},
+	(table) => [
+		index('console_authorization_decided_at').on(table.decidedAt),
+		index('console_authorization_subject_decided').on(table.tundaUserId, table.decidedAt),
+		index('console_authorization_decision_id').on(table.decisionId)
+	]
+);
+
 export const consolePrincipalRelations = relations(consolePrincipal, ({ many }) => ({
 	sessions: many(consoleSession)
 }));

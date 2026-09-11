@@ -4,7 +4,7 @@ import type { AuthedEnv } from '../../env.js';
 import { db } from '../../lib/db.js';
 import { describe } from '../../lib/openapi/describe.js';
 import { quickwit } from '../../lib/quickwit.js';
-import { requireOperator } from '../../middleware/authorize.js';
+import { authorize } from '../../middleware/authorize.js';
 import {
 	ClusterDocumentStatusResponse,
 	ClusterOverviewResponse
@@ -12,7 +12,7 @@ import {
 import { getClusterDocumentStatus, getClusterOverview } from '../../services/cluster.service.js';
 
 export const clusterRouter = new Hono<AuthedEnv>()
-	.use('*', requireOperator)
+	.use('*', authorize('view_cluster', { kind: 'observability_console' }))
 	.get(
 		'/',
 		describe({

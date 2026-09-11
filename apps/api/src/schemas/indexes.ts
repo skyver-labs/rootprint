@@ -10,7 +10,25 @@ const dedupedStrings = v.pipe(
 	v.transform((arr) => [...new Set(arr)])
 );
 
+/**
+ * What is in an index, and whose day it ruins.
+ *
+ * These two are not display settings sitting among display settings. They are the
+ * inputs Tunda's policy turns on: `classification` is what separates "search the
+ * build logs" from "search the payments index", and the policy schema marks both
+ * required — so an index carrying neither matches no rule and is unreadable.
+ *
+ * Both are settable here and here only, behind `change_field_config`, which is
+ * AAL3 with a hardware key proven in the last five minutes. Classification is a
+ * compliance control and is gated like one.
+ */
+export const CLASSIFICATIONS = ['NONE', 'INTERNAL', 'PII', 'RESTRICTED'] as const;
+export const ENVIRONMENTS = ['production', 'staging', 'sandbox'] as const;
+
 export const saveIndexConfigSchema = v.object({
+	classification: v.optional(v.picklist(CLASSIFICATIONS)),
+	environment: v.optional(v.picklist(ENVIRONMENTS)),
+	owningService: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(128)))),
 	displayName: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(128)))),
 	levelField: v.optional(v.pipe(v.string(), v.minLength(1))),
 	messageField: v.optional(v.pipe(v.string(), v.minLength(1))),
@@ -202,6 +220,18 @@ const RESERVED_FIELD_NAMES = new Set(['_source', '_dynamic', '_field_presence'])
 export const createIndexSchema = v.pipe(
 	v.object({
 		indexId,
+
+		// Required at creation, unlike everywhere else they appear.
+		//
+		// An index with no classification is unreadable — every read rule names one
+		// and absence never satisfies a condition — so an optional field here would
+		// produce indexes that ingest happily and that nobody can search, with the
+		// cause three screens away. Asking at the one moment somebody is thinking
+		// about what the index is for is the only time the answer is cheap.
+		classification: v.picklist(CLASSIFICATIONS),
+		environment: v.picklist(ENVIRONMENTS),
+		owningService: v.optional(v.pipe(v.string(), v.maxLength(128))),
+
 		indexUri: v.optional(v.pipe(v.string(), v.minLength(1))),
 		mode: v.optional(v.picklist(INDEX_MODES)),
 		partitionKey: v.optional(v.pipe(v.string(), v.minLength(1))),

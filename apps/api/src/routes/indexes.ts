@@ -7,7 +7,7 @@ import { db } from '../lib/db.js';
 import { quickwit } from '../lib/quickwit.js';
 import { describe, validator } from '../lib/openapi/describe.js';
 import type { AuthedEnv } from '../env.js';
-import { authorize, requireOperator } from '../middleware/authorize.js';
+import { authorize, authorizeEach } from '../middleware/authorize.js';
 import { requireSession } from '../middleware/require-session.js';
 import { rejectTraceIndex } from '../middleware/reject-trace-index.js';
 import { readLimiter } from '../middleware/rate-limit.js';
@@ -82,9 +82,28 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			security: [{ cookieAuth: [] }]
 		}),
 		requireSession,
-		authorize('search', { kind: 'observability_index' }),
+		// No middleware guard, and that is a decision rather than an omission.
+		//
+		// "May this operator list indexes" is not one question. It is one per
+		// index, because listing `payments-production` and listing the build logs
+		// are different answers — and a single guard over the route would have to
+		// pick one of them for everybody. The handler asks all of them in one
+		// BatchCheck and returns what came back permitted.
+		//
+		// An index the operator may not list is absent rather than greyed out. A
+		// picker entry that appears and then refuses on click is worse than one
+		// that never appeared, and the name of an index is itself operational
+		// information — which is why `list` is a separate action from `search`.
 		async (c) => {
-			return c.json(await listIndexes(db, quickwit));
+			const all = await listIndexes(db, quickwit);
+			const permitted = new Set(
+				await authorizeEach(
+					c,
+					'list',
+					all.map((summary) => summary.indexId)
+				)
+			);
+			return c.json(all.filter((summary) => permitted.has(summary.indexId)));
 		}
 	)
 	.post(
@@ -97,11 +116,18 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [400, 409]
 		}),
 		requireSession,
-		requireOperator,
+		// The validator runs BEFORE the authorization here, which is the reverse of
+		// every other route in this file and is deliberate. `create` is the one
+		// decision whose resource attributes come from the body — the index does
+		// not exist yet — and policy must see the body the schema accepted rather
+		// than whatever arrived. The caller is already authenticated by
+		// `requireSession`, so what a malformed body leaks is a validation message
+		// to somebody who has completed a Tunda sign-in.
 		validator('json', createIndexSchema),
+		authorize('create', { kind: 'observability_index', proposed: true }),
 		async (c) => {
 			const input = c.req.valid('json');
-			const created = await createIndex(quickwit, input);
+			const created = await createIndex(db, quickwit, input);
 			return c.json(created, 201);
 		}
 	)
@@ -114,7 +140,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			security: [{ cookieAuth: [] }]
 		}),
 		requireSession,
-		authorize('search', { kind: 'observability_index' }),
+		authorize('view_fields', { kind: 'observability_index' }),
 		rejectTraceIndex,
 		withIndexMeta,
 		validator('param', IndexIdParams),
@@ -149,7 +175,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			ok: IndexDetailResponse
 		}),
 		requireSession,
-		requireOperator,
+		authorize('list', { kind: 'observability_index' }),
 		withIndexMeta,
 		validator('param', IndexIdParams),
 		async (c) => {
@@ -164,7 +190,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			ok: IndexStatsResponse
 		}),
 		requireSession,
-		requireOperator,
+		authorize('list', { kind: 'observability_index' }),
 		validator('param', IndexIdParams),
 		validator('query', StatsQuery),
 		async (c) => {
@@ -182,7 +208,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [400]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		// The only mutation here that never touches Quickwit, so nothing else would 404 a bad index id.
 		withIndexMeta,
 		validator('param', IndexIdParams),
@@ -203,7 +229,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [400, 404, 409]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		withIndexMeta,
 		validator('param', IndexIdParams),
 		validator('json', updateQuickwitConfigSchema),
@@ -223,7 +249,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [409]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('delete', { kind: 'observability_index' }),
 		validator('param', IndexIdParams),
 		async (c) => {
 			const { indexId } = c.req.valid('param');
@@ -241,7 +267,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [400, 409]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		validator('param', IndexIdParams),
 		validator('json', createSourceSchema),
 		async (c) => {
@@ -260,7 +286,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [404]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		withIndexMeta,
 		validator('param', SourceParams),
 		async (c) => {
@@ -277,7 +303,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [400, 404]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		validator('param', SourceParams),
 		validator('json', updateSourceSchema),
 		async (c) => {
@@ -296,7 +322,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [404]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		validator('param', SourceParams),
 		async (c) => {
 			const { indexId, sourceId } = c.req.valid('param');
@@ -313,7 +339,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [409]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		validator('param', SourceParams),
 		validator('json', ToggleSourceBody),
 		async (c) => {
@@ -332,7 +358,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			errors: [409]
 		}),
 		requireSession,
-		requireOperator,
+		authorize('change_field_config', { kind: 'observability_index' }),
 		validator('param', SourceParams),
 		async (c) => {
 			const { indexId, sourceId } = c.req.valid('param');

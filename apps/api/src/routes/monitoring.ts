@@ -22,7 +22,11 @@ import {
 } from '../services/monitoring.service.js';
 
 export const monitoringRouter = new Hono<AuthedEnv>()
-	.use('*', requireSession, authorize('search', { kind: 'observability_index' }))
+	.use(
+		'*',
+		requireSession,
+		authorize('search', { kind: 'observability_index', indexId: config.traceIndexId })
+	)
 	.use('*', readLimiter)
 	.get(
 		'/services',

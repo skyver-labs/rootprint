@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package tunda.common.v1;
+
+option java_package = "com.tunda.grpc.proto.common.v1";
+option java_multiple_files = true;
+option java_outer_classname = "ContextProto";
+
+// Types shared by every Tunda internal gRPC service.
+//
+// Kept in one place so that a change to how tenant context travels is a single
+// edit rather than a sweep, and so a new service cannot invent its own encoding
+// for something the platform already has an answer for.
+
+// Which tenant a call is for.
+//
+// IMPORTANT: this is a *claim*, exactly like the tenant segment of an HTTP path
+// (spec §3, §35). Receiving it establishes nothing. The server resolves it
+// through its own tenant registry and refuses a tenant it does not serve; there
+// is no code path in which a caller reaches a schema by naming one.
+//
+// It travels in the message rather than only in metadata so that it is part of
+// the request's own contract — a service whose method does not take it cannot
+// accidentally read it from ambient state.
+message TenantContext {
+  // The external ULID form, e.g. "tnt_01K7ZQ8XW3NBVEXAMPLE00".
+  string tenant_id = 1;
+
+  // The organization the tenant belongs to (spec §11).
+  string organization_id = 2;
+}
+
+// W3C Trace Context, propagated so one request is followable across processes.
+message TraceContext {
+  // 32 lowercase hex characters.
+  string trace_id = 1;
+
+  // 16 lowercase hex characters. The caller's span, which becomes this call's parent.
+  string span_id = 2;
+}
+
+// A structured failure.
+//
+// gRPC status codes are deliberately coarse — there are sixteen of them, and
+// they answer "how should the client react", not "what happened". This rides
+// alongside as `google.rpc.Status` detail so a caller can distinguish two
+// failures that share a code without parsing a human-readable message.
+message Problem {
+  // Stable, machine-readable, never renamed. The same vocabulary the HTTP
+  // surface uses in RFC 9457 problem documents (spec §194), so one incident
+  // does not need two glossaries.
+  string code = 1;
+
+  // Human-readable. Safe to log; never contains credentials, tokens, or
+  // personal data (JES-SEC-004, spec §216).
+  string message = 2;
+
+  // Correlates this failure with the server's own logs.
+  string trace_id = 3;
+
+  // Field-level detail, for validation failures.
+  repeated FieldViolation violations = 4;
+}
+
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}

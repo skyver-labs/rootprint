@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package tunda.internal.v1;
+
+import "tunda/common/v1/context.proto";
+
+option java_package = "com.tunda.grpc.proto.internal.v1";
+option java_multiple_files = true;
+option java_outer_classname = "AuthorizationProto";
+
+// The Policy Decision Point (spec §163–§167).
+//
+// WHY THIS ONE IS gRPC AND NOT AN EVENT
+//
+// An authorization check is the archetypal synchronous call: the caller cannot
+// proceed without the answer, the answer must reflect current state, and it sits
+// on a latency-sensitive path. Publishing an event and waiting for a reply would
+// be a request/response protocol built out of a message bus — all of the latency
+// and none of the deadline propagation, cancellation, or backpressure that gRPC
+// gives for free.
+//
+// This is also why authorization is not baked into access tokens (spec §76): a
+// token is a snapshot, and a permission inside one keeps working until the token
+// expires no matter what changed.
+service AuthorizationService {
+
+  // Decides one access request.
+  rpc Check(CheckRequest) returns (CheckResponse);
+
+  // Decides several in one round trip.
+  //
+  // A UI rendering a page asks about many resources at once, and issuing one RPC
+  // per resource turns a page render into a latency multiplier. Bounded by the
+  // server, which rejects an oversized batch rather than accepting unbounded
+  // work (JES-DATA-006).
+  rpc BatchCheck(BatchCheckRequest) returns (BatchCheckResponse);
+}
+
+message CheckRequest {
+  tunda.common.v1.TenantContext tenant = 1;
+
+  // Who is asking. A subject bound to a different tenant than `tenant` is a
+  // context mismatch and is refused, never reconciled (spec §275).
+  Subject subject = 2;
+
+  // What they want to do, e.g. "payment.approve".
+  string action = 3;
+
+  Resource resource = 4;
+
+  // What was proven about the subject, and how long ago. Required for step-up
+  // and trust-decay rules (spec §162): a rule saying "AAL2 within five minutes"
+  // cannot be evaluated without both halves.
+  Assurance assurance = 5;
+
+  tunda.common.v1.TraceContext trace = 6;
+}
+
+message Subject {
+  string subject_id = 1;
+  string subject_type = 2;
+  repeated string roles = 3;
+
+  // Session-scoped attributes. Deliberately a bounded map rather than an
+  // arbitrary document: unbounded caller-supplied attributes become an input
+  // channel into policy evaluation.
+  map<string, string> attributes = 4;
+}
+
+message Resource {
+  string type = 1;
+  string id = 2;
+  map<string, string> attributes = 3;
+}
+
+message Assurance {
+  // AAL0..AAL3.
+  string level = 1;
+
+  // RFC 8176 amr values.
+  repeated string methods = 2;
+
+  int64 authenticated_at_epoch_seconds = 3;
+}
+
+message CheckResponse {
+  enum Decision {
+    DECISION_UNSPECIFIED = 0;
+    PERMIT = 1;
+    DENY = 2;
+
+    // Permitted only after the subject satisfies a stronger assurance.
+    // Distinct from DENY because the caller's correct response is to start a
+    // step-up, not to show a refusal.
+    CHALLENGE = 3;
+  }
+
+  Decision decision = 1;
+
+  // Why. Stable and machine-readable, so a denial is explainable months later
+  // without re-running the evaluation (spec §221).
+  string reason_code = 2;
+
+  // Conditions the caller MUST enforce for a PERMIT to be valid — masking a
+  // field, writing an audit record, applying a row filter.
+  //
+  // Specification §167 is explicit: an obligation that the caller does not
+  // enforce makes the whole decision an authorization failure. A caller that
+  // receives an obligation it does not recognize must DENY, not proceed.
+  repeated Obligation obligations = 3;
+
+  // When this decision stops being usable. Zero means "do not cache".
+  int64 expires_at_epoch_seconds = 4;
+
+  // Correlates with the evidence record the PDP wrote.
+  string decision_id = 5;
+}
+
+message Obligation {
+  string type = 1;
+  map<string, string> parameters = 2;
+}
+
+message BatchCheckRequest {
+  tunda.common.v1.TenantContext tenant = 1;
+  Subject subject = 2;
+  Assurance assurance = 3;
+  repeated BatchCheckItem items = 4;
+  tunda.common.v1.TraceContext trace = 5;
+}
+
+message BatchCheckItem {
+  // Echoed back on the matching response, so a caller can pair results without
+  // depending on ordering.
+  string correlation_id = 1;
+  string action = 2;
+  Resource resource = 3;
+}
+
+message BatchCheckResponse {
+  repeated BatchCheckResult results = 1;
+}
+
+message BatchCheckResult {
+  string correlation_id = 1;
+  CheckResponse response = 2;
+}

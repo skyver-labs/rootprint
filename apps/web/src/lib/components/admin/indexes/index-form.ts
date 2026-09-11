@@ -7,6 +7,7 @@ import {
 	TOKENIZERS
 } from 'api/schemas';
 import type { CreateIndexInput, FieldMappingInput } from 'api/schemas';
+import { CLASSIFICATIONS, ENVIRONMENTS } from 'api/schemas';
 import type { DynamicMapping } from 'api/types';
 
 import { lines } from '$lib/utils/lines';
@@ -15,6 +16,8 @@ export type FieldType = (typeof FIELD_TYPES)[number];
 type Tokenizer = (typeof TOKENIZERS)[number];
 type RecordOption = (typeof RECORD_OPTIONS)[number];
 export type IndexMode = (typeof INDEX_MODES)[number];
+export type Classification = (typeof CLASSIFICATIONS)[number];
+export type Environment = (typeof ENVIRONMENTS)[number];
 type FastPrecision = (typeof FAST_PRECISIONS)[number];
 type DatetimeOutputFormat = (typeof DATETIME_OUTPUT_FORMATS)[number];
 
@@ -77,6 +80,20 @@ export type FieldRow = {
 
 type IndexFormState = {
 	indexId: string;
+
+	/**
+	 * What will be in this index, and whose day it ruins.
+	 *
+	 * Required, unlike every other field on this form, because Tunda decides who
+	 * may read an index from its classification and an index carrying none matches
+	 * no rule — it would ingest happily and refuse every search, with the cause
+	 * three screens away. There is no sensible default: the answer depends on what
+	 * the index is for, which is a thing only the person creating it knows.
+	 */
+	classification: Classification | '';
+	environment: Environment | '';
+	owningService: string;
+
 	mode: IndexMode;
 	timestampField: string;
 	fields: FieldRow[];
@@ -118,6 +135,12 @@ export function emptyFieldRow(type: FieldType = 'text'): FieldRow {
 export function emptyIndexForm(): IndexFormState {
 	return {
 		indexId: '',
+		// Empty, not 'NONE'. A preselected classification is one somebody accepts
+		// without reading, and the whole point of asking is that the answer be
+		// chosen. The form refuses to submit until it is.
+		classification: '',
+		environment: '',
+		owningService: '',
 		mode: 'dynamic',
 		timestampField: 'timestamp',
 		// The backend force-sets fast on whatever field is the timestamp, so the
@@ -195,6 +218,14 @@ export function fieldToMapping(field: FieldRow): FieldMappingInput {
 export function formToCreateInput(form: IndexFormState): CreateIndexInput {
 	const input: CreateIndexInput = {
 		indexId: form.indexId.trim(),
+		// Cast because the form models "not chosen yet" as the empty string and the
+		// API type does not admit one. The caller runs this through
+		// `createIndexSchema` — the same valibot schema the server validates
+		// against — which refuses an empty picklist value, so the narrowing holds
+		// for anything that reaches the network. The server checks independently
+		// regardless: a client-side check is not an authorization control.
+		classification: form.classification as Classification,
+		environment: form.environment as Environment,
 		mode: form.mode,
 		timestampField: form.timestampField,
 		fieldMappings: form.fields.map(fieldToMapping),
@@ -209,6 +240,9 @@ export function formToCreateInput(form: IndexFormState): CreateIndexInput {
 		)
 		.map((f) => f.name.trim());
 	if (searchFields.length) input.defaultSearchFields = searchFields;
+
+	const owningService = form.owningService.trim();
+	if (owningService) input.owningService = owningService;
 
 	const tags = lines(form.tagFields);
 	if (tags.length) input.tagFields = tags;

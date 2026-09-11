@@ -34,6 +34,16 @@ const owner = consolePrincipal;
 // in this schema — a person is invited in Tunda, and a producer is a Tunda client
 // registration whose token this console verifies and never stores.
 
+/**
+ * How an index is classified, which is the input every read decision turns on.
+ *
+ * Deliberately not defaulted. See `indexSettings.classification`.
+ */
+export type IndexClassification = 'NONE' | 'INTERNAL' | 'PII' | 'RESTRICTED';
+
+/** Whose day it ruins. Separate from classification; see Tunda's policy schema. */
+export type IndexEnvironment = 'production' | 'staging' | 'sandbox';
+
 export const indexSettings = pgTable('index_settings', {
 	indexId: text('index_id').primaryKey(),
 	displayName: text('display_name'),
@@ -42,6 +52,41 @@ export const indexSettings = pgTable('index_settings', {
 	tracebackField: text('traceback_field'),
 	contextFields: jsonb('context_fields').$type<string[] | null>(),
 	traceIdField: text('trace_id_field').notNull().default('trace_id'),
+
+	/**
+	 * What is in this index: `NONE`, `INTERNAL`, `PII` or `RESTRICTED`.
+	 *
+	 * **Nullable on purpose, and with no default.** Tunda's policy schema marks
+	 * `classification` required, and absence never satisfies a condition there —
+	 * so an index nobody has classified matches no rule, and a rule that does not
+	 * match grants nothing. An unclassified index is unreadable.
+	 *
+	 * A default would undo exactly that. `INTERNAL` would make a production
+	 * payments index readable because somebody created it and moved on;
+	 * `RESTRICTED` would look safe and would instead teach every operator that the
+	 * first step with a new index is to lower its classification, which is the
+	 * habit that makes the field meaningless. Null is the honest third answer:
+	 * nobody has said, so nobody may read.
+	 *
+	 * Set through `PATCH /api/indexes/:indexId`, which is governed by
+	 * `change_field_config` — AAL3 with a hardware key proven in the last five
+	 * minutes. Classification is a compliance control and is gated like one.
+	 */
+	classification: text('classification').$type<IndexClassification>(),
+
+	/**
+	 * `production`, `staging` or `sandbox`. Required by the same schema and null
+	 * for the same reason: an index whose environment nobody stated is one no rule
+	 * can evaluate, which is a denial.
+	 */
+	environment: text('environment').$type<IndexEnvironment>(),
+
+	/**
+	 * Which service writes to it. Carried into the decision rather than read by
+	 * any rule — it is the first thing an investigation asks.
+	 */
+	owningService: text('owning_service'),
+
 	createdAt: timestamp('created_at').defaultNow().notNull(),
 	updatedAt: timestamp('updated_at')
 		.defaultNow()

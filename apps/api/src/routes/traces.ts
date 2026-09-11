@@ -14,7 +14,11 @@ import { auditActor, withSearchAudit } from '../services/search-audit.service.js
 import { getTrace } from '../services/trace.service.js';
 
 export const tracesRouter = new Hono<AuthedEnv>()
-	.use('*', requireSession, authorize('search', { kind: 'observability_index' }))
+	.use(
+		'*',
+		requireSession,
+		authorize('search', { kind: 'observability_index', indexId: config.traceIndexId })
+	)
 	.use('*', readLimiter)
 	.get(
 		'/:traceId',
