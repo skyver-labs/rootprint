@@ -347,9 +347,22 @@ export class SearchStore {
 			const active = this.selectedIndex;
 			if (active === null) return;
 
+			// Record the resolved index in the URL so the view is shareable — but do NOT
+			// wait for it before searching.
+			//
+			// This used to `return` here, which made the first load of a bare `/` a dead
+			// end: with no `?index=`, `selectedIndex` falls back to the first index, the
+			// URL does not match it, and the effect navigated and returned. If that
+			// navigation does not land — and it does not, because `navigateQuery` aborts
+			// the in-flight requests and `goto` is racing an effect that re-runs — the
+			// config is never fetched, the fields panel stays empty and the spinner runs
+			// forever, on an index the picker is happily displaying.
+			//
+			// `active` is already known and already correct; the URL catching up is a
+			// separate concern from loading it. The guards below make the extra pass
+			// idempotent.
 			if (this.#parsedQuery().index !== active) {
 				this.navigateQuery({ index: active });
-				return;
 			}
 
 			if (active !== this.#configFetchedFor) {
