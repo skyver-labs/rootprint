@@ -33,20 +33,8 @@ import type {
 } from './schemas/responses/monitoring.js';
 import type { TraceResponseSchema, TraceSpanSchema } from './schemas/responses/traces.js';
 import type { SavedViewResponse as SavedViewResponseSchema } from './schemas/responses/views.js';
-import type {
-	ApiKeyResponse as ApiKeyResponseSchema,
-	ApiKeyValueResponse as ApiKeyValueResponseSchema,
-	ServiceAccountApiKeyResponse as ServiceAccountApiKeyResponseSchema
-} from './schemas/responses/api-keys.js';
-import type { UserResponse as UserResponseSchema } from './schemas/responses/users.js';
-import type { AuthProvidersResponse as AuthProvidersResponseSchema } from './schemas/responses/auth.js';
 import type { HealthResponse as HealthResponseSchema } from './schemas/responses/health.js';
 import type { ShareViewResponse as ShareViewResponseSchema } from './schemas/responses/shares.js';
-import type {
-	GoogleAuthSettingsResponse as GoogleAuthSettingsResponseSchema,
-	GitHubAuthSettingsResponse as GitHubAuthSettingsResponseSchema
-} from './schemas/responses/settings.js';
-import type { ServiceAccountResponse as ServiceAccountResponseSchema } from './schemas/responses/service-accounts.js';
 import type {
 	ActorIndexRowResponse as ActorIndexRowResponseSchema,
 	ActorSummaryRowResponse as ActorSummaryRowResponseSchema,
@@ -62,7 +50,6 @@ import type {
 	TopActorRowResponse as TopActorRowResponseSchema,
 	VolumeBucketResponse as VolumeBucketResponseSchema
 } from './schemas/responses/admin.js';
-import type { githubCredentialsSchema } from './schemas/settings.js';
 
 export type HealthResponse = v.InferOutput<typeof HealthResponseSchema>;
 
@@ -121,28 +108,13 @@ export type TimeRange =
 
 export type FieldValuesBulkResponse = v.InferOutput<typeof FieldValuesBulkResponseSchema>;
 
-export type UserRole = 'admin' | 'user';
-export type UserStatus = 'active' | 'pending' | 'expired';
+// `User`, `UserRole`, `UserStatus`, `ApiKeySummary`, `ApiKeyValue`,
+// `ServiceAccountSummary`, `VerifiedApiKey`, `GoogleAuthSettings`,
+// `GitHubAuthSettings` and `AuthProvidersInfo` were the shapes of a second
+// identity system's API. There is no console-side representation of a person or a
+// credential any more: `RequestSession` in `env.ts` carries an id, and everything
+// else about the principal is Tunda's to answer at decision time.
 
-export type User = v.InferOutput<typeof UserResponseSchema>;
-
-export type ApiKeySummary = v.InferOutput<typeof ApiKeyResponseSchema>;
-
-export type ServiceAccountApiKeySummary = v.InferOutput<typeof ServiceAccountApiKeyResponseSchema>;
-
-export type ApiKeyValue = v.InferOutput<typeof ApiKeyValueResponseSchema>;
-
-export type ServiceAccountSummary = v.InferOutput<typeof ServiceAccountResponseSchema>;
-
-export type VerifiedApiKey = {
-	id: number;
-	name: string;
-	indexId: string;
-};
-
-export type Scope = Record<string, string[]>;
-
-export type { CreateApiKeyInput } from './schemas/api-keys.js';
 export type { ShareCreateInput } from './schemas/shares.js';
 
 export type SavedView = v.InferOutput<typeof SavedViewResponseSchema>;
@@ -152,12 +124,6 @@ export type ShareView = v.InferOutput<typeof ShareViewResponseSchema>;
 export type DisplayMode = 'table' | 'inline';
 
 export type Preferences = v.InferOutput<typeof PreferencesResponseSchema>;
-
-export type GoogleAuthSettings = v.InferOutput<typeof GoogleAuthSettingsResponseSchema>;
-
-export type GitHubAuthSettings = v.InferOutput<typeof GitHubAuthSettingsResponseSchema>;
-
-export type AuthProvidersInfo = v.InferOutput<typeof AuthProvidersResponseSchema>;
 
 export type IndexStatsPoint = v.InferOutput<typeof IndexStatsPointSchema>;
 
@@ -227,25 +193,6 @@ export type IndexMeta = {
 	settings: IndexSettings;
 	index: QuickwitIndexMetadata;
 };
-
-export type VerifyApiKeyResult = { status: 'ok'; key: VerifiedApiKey } | { status: 'not-found' };
-
-// User administration (lib/auth-admin.ts)
-export type AdminCreateUserInput = {
-	email: string;
-	name: string;
-	password: string;
-	role: UserRole;
-};
-
-// Settings (settings.service.ts)
-export type GoogleAuthCredentials = {
-	clientId: string;
-	clientSecret: string;
-	allowedDomains: string[];
-};
-
-export type GitHubAuthCredentials = v.InferOutput<typeof githubCredentialsSchema>;
 
 // Export (export.service.ts)
 export type ExportPreflightResult = {

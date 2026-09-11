@@ -6,8 +6,6 @@ import type { GenerateSpecOptions } from 'hono-openapi';
 import type { Env, Hono } from 'hono';
 import type { Schema } from 'hono/types';
 
-import { authOpenAPISchema } from '../auth.js';
-import { decorateAuthPaths } from './auth-descriptions.js';
 import { errorResponseComponents } from './errors.js';
 
 function rootVersion(): string {
@@ -26,12 +24,17 @@ const documentation: GenerateSpecOptions['documentation'] = {
 	servers: [{ url: 'https://example.com', description: 'Rootprint API' }],
 	components: {
 		securitySchemes: {
-			cookieAuth: { type: 'apiKey', in: 'cookie', name: 'better-auth.session_token' },
-			ingestBearer: { type: 'http', scheme: 'bearer', description: 'Ingest API key' },
-			personalBearer: {
+			// The opaque console session. Its value is meaningless outside this
+			// deployment's database, which is the point: a tool holding one can call
+			// this API and can do nothing with it anywhere else.
+			cookieAuth: { type: 'apiKey', in: 'cookie', name: '__Host-rp_session' },
+			// A Tunda `client_credentials` access token, for producers only. There is
+			// no read-capable bearer scheme: personal and service-account API keys
+			// were this console's own credentials, and it no longer issues any.
+			ingestBearer: {
 				type: 'http',
 				scheme: 'bearer',
-				description: 'Query API key (personal or service account)'
+				description: 'A Tunda access token for a registered telemetry producer'
 			}
 		},
 		responses: errorResponseComponents
@@ -48,36 +51,20 @@ export const specOptions = {
 	exclude: [/^\/(?!api\/|v1\/).*/]
 } satisfies Partial<GenerateSpecOptions>;
 
-type PathItemObject = Record<string, unknown>;
-
-function prefixedAuthPaths(paths: Record<string, PathItemObject>): Record<string, PathItemObject> {
-	return Object.fromEntries(Object.entries(paths).map(([p, item]) => [`/api/auth${p}`, item]));
-}
-
 export async function buildSpec<E extends Env, S extends Schema, P extends string>(
 	app: Hono<E, S, P>
 ) {
-	const [spec, authSpec] = await Promise.all([
-		generateSpecs(app, specOptions),
-		authOpenAPISchema()
-	]);
-	const authPaths = decorateAuthPaths(
-		prefixedAuthPaths(authSpec.paths as Record<string, PathItemObject>)
-	);
+	const spec = await generateSpecs(app, specOptions);
 
 	return {
 		...spec,
-		paths: { ...spec.paths, ...authPaths },
+		paths: spec.paths,
 		components: {
 			...spec.components,
 			securitySchemes: {
-				...spec.components?.securitySchemes,
-				...authSpec.components?.securitySchemes
+				...spec.components?.securitySchemes
 			},
-			schemas: {
-				...spec.components?.schemas,
-				...authSpec.components?.schemas
-			}
+			schemas: spec.components?.schemas
 		}
 	};
 }

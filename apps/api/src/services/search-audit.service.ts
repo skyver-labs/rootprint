@@ -26,10 +26,18 @@ function extractAuditError(err: unknown): { code: string; message: string } {
 // Discriminated by who issued the search — the search_audit check constraint
 // enforces the matching (source, userId/apiKeyId) shape, so the two are tied
 // together here rather than passed as loose fields.
+//
+// The `token` arm is now only ever read, never written. It described a search
+// run with a console-issued query API key, and this console issues none; the
+// credentials it accepts today (`machine-token.ts`) write telemetry and are
+// refused every read action by policy. The variant stays because rows recorded
+// before the fork still carry it and an audit trail is not rewritten to make a
+// type tidier.
 type AuditActor = { source: 'ui'; userId: string } | { source: 'token'; apiKeyId: string };
 
-export function auditActor(userId: string, apiKeyId?: string): AuditActor {
-	return apiKeyId === undefined ? { source: 'ui', userId } : { source: 'token', apiKeyId };
+/** A search attributed to the Tunda principal who ran it. */
+export function auditActor(principalId: string): AuditActor {
+	return { source: 'ui', userId: principalId };
 }
 
 type SearchAuditMetadata = {

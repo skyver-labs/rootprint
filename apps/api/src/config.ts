@@ -13,6 +13,15 @@ export const config = {
 	origin: requireUrlEnv('ORIGIN'),
 	quickwitUrl: requireUrlEnv('QUICKWIT_URL'),
 	traceIndexId: process.env.TRACE_INDEX_ID || 'otel-traces-v0_9',
+
+	// Which deployment this is, as it appears in a producer token's
+	// `signal:environment:index` destinations. A token issued for `staging` resolves
+	// no destination here when this says `production`, so the batch is refused.
+	//
+	// The default is `development` rather than `production` because that is the
+	// fail-closed direction: a production console that was never configured refuses
+	// writes, instead of accepting a staging producer's batch into a production index.
+	environment: process.env.TUNDA_ENVIRONMENT || 'development',
 	frontendUrl: optionalUrlEnv('FRONTEND_URL'),
 	port: intEnv('PORT', 8282),
 	trustedProxyHops: intEnv('TRUST_PROXY_HOPS', 0),

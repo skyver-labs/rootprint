@@ -23,22 +23,21 @@
 		return setup.defaultFlavor;
 	});
 
-	let selectedApiKeyId = $state<number | null>(
+	let selectedIndexId = $state<string>(
 		untrack(() => {
-			const otelKey = data.apiKeys.find((k) => k.indexId === DEFAULT_OTEL_LOGS_INDEX_ID);
-			return otelKey?.id ?? data.apiKeys[0]?.id ?? null;
+			const preferred = data.indexes.find((i) => i.indexId === DEFAULT_OTEL_LOGS_INDEX_ID);
+			return preferred?.indexId ?? data.indexes[0]?.indexId ?? DEFAULT_OTEL_LOGS_INDEX_ID;
 		})
 	);
-	let realApiKeyValue = $state<string | null>(null);
-	const selectedApiKey = $derived(
-		selectedApiKeyId != null ? (data.apiKeys.find((k) => k.id === selectedApiKeyId) ?? null) : null
-	);
-	const selectedIndexId = $derived(selectedApiKey?.indexId ?? DEFAULT_OTEL_LOGS_INDEX_ID);
 
+	// Always a placeholder. The wizard used to paste a freshly minted key straight
+	// into these snippets; the credential is now a Tunda access token the producer
+	// fetches for itself, and a console that could print one would be a console
+	// that had a copy.
 	const ctx = $derived({
 		origin: page.url.origin,
-		apiKey: realApiKeyValue ?? '<your-ingest-api-key>',
-		hasRealApiKey: realApiKeyValue !== null,
+		apiKey: '$TUNDA_ACCESS_TOKEN',
+		hasRealApiKey: false,
 		indexId: selectedIndexId,
 		flavor
 	});
@@ -50,12 +49,9 @@
 	<WizardHeader
 		{integration}
 		{signal}
-		apiKeys={data.apiKeys}
 		indexes={data.indexes}
 		traceIndexId={data.traceIndexId}
-		{selectedIndexId}
-		bind:selectedApiKeyId
-		bind:realApiKeyValue
+		bind:selectedIndexId
 	/>
 
 	{#if integration.traces}

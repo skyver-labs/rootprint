@@ -14,7 +14,6 @@ import { NotFoundError, QuickwitError, QuickwitErrorCode, type QuickwitClient } 
 import type { Db } from '../lib/db.js';
 import { fetchFieldCaps } from '../lib/quickwit-field-caps.js';
 import {
-	apiKey,
 	indexSettings,
 	indexStatsSnapshot,
 	searchAudit,
@@ -25,7 +24,6 @@ import {
 import { config } from '../config.js';
 import { conflict, internal, notFound } from '../utils/http-error.js';
 import { translateQuickwitError, withNotFound } from '../utils/quickwit-error.js';
-import { invalidateApiKeyCache } from './api-key.service.js';
 import type {
 	CreateIndexInput,
 	SaveIndexConfigInput,
@@ -224,11 +222,8 @@ export async function deleteIndex(db: Db, qw: QuickwitClient, indexId: string): 
 		await tx.delete(userPreference).where(eq(userPreference.indexId, indexId));
 		await tx.delete(viewTable).where(eq(viewTable.indexId, indexId));
 		await tx.delete(share).where(eq(share.indexId, indexId));
-		await tx.delete(apiKey).where(eq(apiKey.indexId, indexId));
 		await tx.delete(searchAudit).where(eq(searchAudit.indexId, indexId));
 	});
-
-	invalidateApiKeyCache();
 }
 
 export async function createIndex(

@@ -16,7 +16,23 @@ import {
 
 import type { DisplayMode, Filter, TimeRange } from '../types.js';
 
-import { user } from './auth.schema.js';
+import { consolePrincipal } from '../tunda/schema.js';
+
+/**
+ * Ownership points at the console's principal record, not at a local user.
+ *
+ * `console_principal` is a cache of a Tunda subject and holds no authority — no
+ * role, no status, no credential. What it gives these tables is a stable key for
+ * "who saved this view", which survives a person changing their email address in
+ * a way an address-keyed row would not.
+ */
+const owner = consolePrincipal;
+
+// `invite_token` and `api_key` were here. Both were credentials this console
+// minted: an invite redeemed into an account, and an `rpk_` ingest key stored in
+// plaintext alongside the index it was allowed to write. Neither has a successor
+// in this schema — a person is invited in Tunda, and a producer is a Tunda client
+// registration whose token this console verifies and never stores.
 
 export const indexSettings = pgTable('index_settings', {
 	indexId: text('index_id').primaryKey(),
@@ -39,7 +55,7 @@ export const userPreference = pgTable(
 		id: serial('id').primaryKey(),
 		userId: text('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
+			.references(() => owner.id, { onDelete: 'cascade' }),
 		indexId: text('index_id').notNull(),
 		displayFields: jsonb('display_fields').$type<string[]>(),
 		lineWrap: boolean('line_wrap').notNull().default(false),
@@ -56,49 +72,13 @@ export const userPreference = pgTable(
 	]
 );
 
-export const inviteToken = pgTable(
-	'invite_token',
-	{
-		id: serial('id').primaryKey(),
-		userId: text('user_id')
-			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
-		token: text('token').notNull().unique(),
-		expiresAt: timestamp('expires_at').notNull(),
-		createdAt: timestamp('created_at').defaultNow().notNull()
-	},
-	(table) => [
-		index('invite_token_user').on(table.userId),
-		index('invite_token_expires').on(table.expiresAt)
-	]
-);
-
-export const apiKey = pgTable(
-	'api_key',
-	{
-		id: serial('id').primaryKey(),
-		name: text('name').notNull().unique(),
-		token: text('token').notNull().unique(),
-		indexId: text('index_id').notNull(),
-		lastUsedAt: timestamp('last_used_at'),
-		createdByUserId: text('created_by_user_id')
-			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
-		createdAt: timestamp('created_at').defaultNow().notNull()
-	},
-	(table) => [
-		index('api_key_created_by').on(table.createdByUserId),
-		index('api_key_index_id').on(table.indexId)
-	]
-);
-
 export const view = pgTable(
 	'view',
 	{
 		id: serial('id').primaryKey(),
 		userId: text('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
+			.references(() => owner.id, { onDelete: 'cascade' }),
 		indexId: text('index_id').notNull(),
 		name: text('name').notNull(),
 		query: text('query').notNull().default(''),
@@ -125,7 +105,7 @@ export const share = pgTable(
 		code: text('code').notNull().unique(),
 		userId: text('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: 'cascade' }),
+			.references(() => owner.id, { onDelete: 'cascade' }),
 		indexId: text('index_id').notNull(),
 		query: text('query').notNull().default(''),
 		startTime: integer('start_time').notNull(),
@@ -197,4 +177,4 @@ export const searchAudit = pgTable(
 	]
 );
 
-export * from './auth.schema.js';
+export * from '../tunda/schema.js';

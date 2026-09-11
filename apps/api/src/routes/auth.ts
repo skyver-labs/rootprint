@@ -1,134 +1,206 @@
 import { Hono } from 'hono';
 
-import { config } from '../config.js';
 import type { AppEnv } from '../env.js';
-import type { AuthProvidersInfo } from '../types.js';
-import { auth } from '../lib/auth.js';
-import { db } from '../lib/db.js';
-import { describe, validator } from '../lib/openapi/describe.js';
-import { setupAdminSchema, setupPasswordSchema, verifyInviteSchema } from '../schemas/auth.js';
+import { logger } from '../lib/logger.js';
+import { publicAuthLimiter } from '../middleware/rate-limit.js';
+import { readSessionCookie } from '../middleware/require-session.js';
 import {
-	AuthProvidersResponse,
-	BootstrapResponse,
-	SetupAdminResponse,
-	SetupPasswordResponse,
-	VerifyInviteResponse
-} from '../schemas/responses/auth.js';
+	completeFlow,
+	FlowRejected,
+	safeNextPath,
+	startFlow,
+	TRANSACTION_COOKIE
+} from '../tunda/oidc.js';
+import { theIssuer } from '../tunda/issuers.js';
 import {
-	createFirstAdmin,
-	isSetupCompleted,
-	setupPassword,
-	validateInviteToken
-} from '../services/auth.service.js';
-import {
-	loadGitHubAuthForBetterAuth,
-	loadGoogleAuthForBetterAuth
-} from '../services/settings.service.js';
-import { publicAuthLimiter, resolveClientIp } from '../middleware/rate-limit.js';
-import { conflict } from '../utils/http-error.js';
+	createSession,
+	endSession,
+	idTokenOf,
+	rememberPrincipal,
+	resolveSession,
+	SESSION_COOKIE
+} from '../tunda/sessions.js';
 
-// Custom endpoints come first; better-auth wildcard is last so it doesn't shadow them.
-// Routes are chained so Hono propagates request/response types for the RPC client.
+/**
+ * The whole of this console's authentication surface.
+ *
+ * Four routes, and none of them verifies a credential. There is no sign-in form,
+ * no password endpoint, no invite redemption and no first-admin bootstrap —
+ * upstream had all five and each was a way to obtain a session without Tunda.
+ *
+ * What remains is: start a flow, finish one, end one, and describe the current
+ * one.
+ */
+
+/** `__Host-` requires Secure and Path=/, and forbids Domain. A sibling host cannot set it. */
+const COOKIE_ATTRIBUTES = 'Path=/; HttpOnly; Secure; SameSite=Lax';
+
 export const authRouter = new Hono<AppEnv>()
-	.post(
-		'/setup-admin',
-		describe({
-			tag: 'Authentication',
-			summary: 'Set up first admin',
-			description: 'Creates the initial admin account. Fails with 409 if setup is already done.',
-			ok: SetupAdminResponse,
-			okStatus: 201,
-			okDescription: 'Admin created',
-			errors: [409],
-			security: []
-		}),
-		publicAuthLimiter,
-		validator('json', setupAdminSchema),
-		async (c) => {
-			const body = c.req.valid('json');
+	/**
+	 * Begins a sign-in.
+	 *
+	 * A `GET`, because it starts an authentication rather than changing anything —
+	 * the session cookie is set on the callback, not here.
+	 */
+	.get('/login', publicAuthLimiter, async (c) => {
+		const next = safeNextPath(c.req.query('next'));
+		const flow = await startFlow(next);
 
-			if (await isSetupCompleted(db)) {
-				throw conflict('Admin already exists');
+		c.header(
+			'set-cookie',
+			`${TRANSACTION_COOKIE}=${flow.transactionHandle}; ${COOKIE_ATTRIBUTES}; Max-Age=600`,
+			{ append: true }
+		);
+		return c.redirect(flow.authorizeUrl, 302);
+	})
+
+	/**
+	 * Begins a step-up, in response to a `STEP_UP_REQUIRED` refusal.
+	 *
+	 * The requested assurance is carried to Tunda as `acr_values` with
+	 * `prompt=login`, so it authenticates again rather than returning whatever the
+	 * current device already satisfies. What comes back is verified against what was
+	 * asked for: a relying party that requests AAL3 and proceeds on whatever arrives
+	 * has requested nothing.
+	 */
+	.get('/step-up', publicAuthLimiter, async (c) => {
+		const acr = c.req.query('acr');
+		if (acr === undefined || acr === '') {
+			return c.json({ error: { code: 'ACR_REQUIRED', message: 'acr is required' } }, 400);
+		}
+
+		const flow = await startFlow(safeNextPath(c.req.query('next')), acr);
+		c.header(
+			'set-cookie',
+			`${TRANSACTION_COOKIE}=${flow.transactionHandle}; ${COOKIE_ATTRIBUTES}; Max-Age=600`,
+			{ append: true }
+		);
+		return c.redirect(flow.authorizeUrl, 302);
+	})
+
+	/** Finishes a flow. */
+	.get('/callback', publicAuthLimiter, async (c) => {
+		const transactionHandle = readCookie(c.req.header('cookie'), TRANSACTION_COOKIE);
+
+		try {
+			const { tokens, nextPath } = await completeFlow(
+				transactionHandle ?? undefined,
+				c.req.query('state'),
+				c.req.query('code')
+			);
+
+			const principalId = await rememberPrincipal(tokens.verified, null);
+			const handle = await createSession(principalId, tokens.verified, tokens);
+
+			// The transaction cookie is cleared explicitly. Leaving it to expire would
+			// leave a spent handle in the browser for ten minutes.
+			c.header('set-cookie', `${TRANSACTION_COOKIE}=; ${COOKIE_ATTRIBUTES}; Max-Age=0`, {
+				append: true
+			});
+			c.header('set-cookie', `${SESSION_COOKIE}=${handle}; ${COOKIE_ATTRIBUTES}`, {
+				append: true
+			});
+
+			return c.redirect(nextPath, 302);
+		} catch (err) {
+			// One response for every failure. A replayed callback, a mismatched state
+			// and an expired transaction are the same answer to whoever sent it; the
+			// distinction is in the log.
+			logger.warn(
+				{ reason: err instanceof FlowRejected ? err.reason : 'unknown' },
+				'authorization callback rejected'
+			);
+			c.header('set-cookie', `${TRANSACTION_COOKIE}=; ${COOKIE_ATTRIBUTES}; Max-Age=0`, {
+				append: true
+			});
+			return c.json(
+				{ error: { code: 'SIGN_IN_FAILED', message: 'Sign-in could not be completed.' } },
+				400
+			);
+		}
+	})
+
+	/**
+	 * Ends the session here, and at Tunda when it can.
+	 *
+	 * A `POST`: it changes state, so it carries the CSRF protections every other
+	 * write does.
+	 */
+	.post('/logout', async (c) => {
+		const handle = readSessionCookie(c.req.header('cookie'));
+		let redirectTo: string | null = null;
+
+		if (handle !== null) {
+			const session = await resolveSession(handle);
+			if (session !== null) {
+				const idToken = await idTokenOf(session.id);
+				await endSession(session.id, 'LOGOUT');
+
+				// RP-initiated logout, so signing out here signs out of Tunda rather
+				// than leaving a session that a fresh sign-in would silently resume.
+				if (idToken !== null) {
+					const issuer = theIssuer();
+					const parameters = new URLSearchParams({
+						id_token_hint: idToken,
+						client_id: issuer.clientId,
+						post_logout_redirect_uri: `${issuer.redirectUri.replace(/\/api\/auth\/callback$/, '')}/signed-out`
+					});
+					redirectTo = `${issuer.issuer}/connect/logout?${parameters.toString()}`;
+				}
 			}
+		}
 
-			const result = await createFirstAdmin(db, auth(), body);
-			return c.json(result, 201);
+		c.header('set-cookie', `${SESSION_COOKIE}=; ${COOKIE_ATTRIBUTES}; Max-Age=0`, {
+			append: true
+		});
+
+		return c.json({ signedOut: true as const, redirectTo });
+	})
+
+	/**
+	 * Who is signed in.
+	 *
+	 * Returns `401` with a `loginUrl` when nobody is. The browser navigates the
+	 * top-level window there — never a fetch, an iframe or a popup, none of which
+	 * can complete a flow that may need a WebAuthn ceremony.
+	 */
+	.get('/session', async (c) => {
+		const handle = readSessionCookie(c.req.header('cookie'));
+		const session = handle === null ? null : await resolveSession(handle);
+
+		if (session === null) {
+			return c.json(
+				{
+					error: {
+						code: 'UNAUTHENTICATED',
+						message: 'Sign in to continue.',
+						loginUrl: '/api/auth/login'
+					}
+				},
+				401
+			);
 		}
-	)
-	.post(
-		'/verify-invite',
-		describe({
-			tag: 'Authentication',
-			summary: 'Verify invite token',
-			description: 'Validates an invite token and returns the associated email address.',
-			ok: VerifyInviteResponse,
-			security: []
-		}),
-		publicAuthLimiter,
-		validator('json', verifyInviteSchema),
-		async (c) => {
-			const { token } = c.req.valid('json');
-			const { email } = await validateInviteToken(db, token);
-			return c.json({ valid: true as const, email });
-		}
-	)
-	.post(
-		'/setup-password',
-		describe({
-			tag: 'Authentication',
-			summary: 'Set password via invite token',
-			description: 'Sets or updates a credential-account password using a valid invite token.',
-			ok: SetupPasswordResponse,
-			security: []
-		}),
-		publicAuthLimiter,
-		validator('json', setupPasswordSchema),
-		async (c) => {
-			const body = c.req.valid('json');
-			await setupPassword(db, auth(), body.token, body.password);
-			return c.json({ success: true as const });
-		}
-	)
-	.get(
-		'/bootstrap',
-		describe({
-			tag: 'Authentication',
-			summary: 'Bootstrap status',
-			description: 'Returns whether the first-admin setup step still needs to be completed.',
-			ok: BootstrapResponse,
-			security: []
-		}),
-		async (c) => {
-			return c.json({ needsSetupAdmin: !(await isSetupCompleted(db)) });
-		}
-	)
-	.get(
-		'/providers',
-		describe({
-			tag: 'Authentication',
-			summary: 'List auth providers',
-			description: 'Returns which authentication providers are currently enabled.',
-			ok: AuthProvidersResponse,
-			security: []
-		}),
-		async (c) => {
-			const [google, github] = await Promise.all([
-				loadGoogleAuthForBetterAuth(db),
-				loadGitHubAuthForBetterAuth(db)
-			]);
-			const body: AuthProvidersInfo = {
-				google: { enabled: !!google },
-				github: { enabled: !!github }
-			};
-			return c.json(body);
-		}
-	)
-	.all('/*', (c) => {
-		const req = c.req.raw;
-		const origin = req.headers.get('origin');
-		if (!origin || origin === 'null') {
-			req.headers.set('origin', config.origin);
-		}
-		req.headers.set('x-rootprint-client-ip', resolveClientIp(c));
-		return auth().handler(req);
+
+		return c.json({
+			principalId: session.principalId,
+			displayName: session.displayName,
+			// What Tunda proved, relayed unchanged. The browser renders from it and
+			// decides nothing: every server call is authorized again.
+			acr: session.acr,
+			amr: session.amr,
+			authenticatedAt: session.authTime.toISOString()
+		});
 	});
+
+function readCookie(header: string | undefined, name: string): string | null {
+	if (header === undefined) {
+		return null;
+	}
+	for (const part of header.split(';')) {
+		const separator = part.indexOf('=');
+		if (separator >= 0 && part.slice(0, separator).trim() === name) {
+			return decodeURIComponent(part.slice(separator + 1).trim());
+		}
+	}
+	return null;
+}

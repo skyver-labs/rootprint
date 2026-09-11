@@ -7,9 +7,8 @@ import { db } from '../lib/db.js';
 import { quickwit } from '../lib/quickwit.js';
 import { describe, validator } from '../lib/openapi/describe.js';
 import type { AuthedEnv } from '../env.js';
-import { requireAdmin } from '../middleware/require-admin.js';
-import { requireUser } from '../middleware/require-user.js';
-import { LOGS_READ, requireUserOrPersonalKey } from '../middleware/require-user-or-personal-key.js';
+import { authorize, requireOperator } from '../middleware/authorize.js';
+import { requireSession } from '../middleware/require-session.js';
 import { rejectTraceIndex } from '../middleware/reject-trace-index.js';
 import { readLimiter } from '../middleware/rate-limit.js';
 import { withIndexConfig, withIndexMeta } from '../middleware/with-index.js';
@@ -80,9 +79,10 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Index management',
 			summary: 'List indexes',
 			ok: IndexListResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }]
+			security: [{ cookieAuth: [] }]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		async (c) => {
 			return c.json(await listIndexes(db, quickwit));
 		}
@@ -96,8 +96,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 201,
 			errors: [400, 409]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('json', createIndexSchema),
 		async (c) => {
 			const input = c.req.valid('json');
@@ -111,9 +111,10 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Index management',
 			summary: 'List index fields',
 			ok: IndexFieldsResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }]
+			security: [{ cookieAuth: [] }]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		rejectTraceIndex,
 		withIndexMeta,
 		validator('param', IndexIdParams),
@@ -128,9 +129,10 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Index management',
 			summary: 'Get index view config',
 			ok: IndexViewConfigResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }]
+			security: [{ cookieAuth: [] }]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		rejectTraceIndex,
 		withIndexMeta,
 		validator('param', IndexIdParams),
@@ -146,8 +148,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			summary: 'Get index detail',
 			ok: IndexDetailResponse
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		withIndexMeta,
 		validator('param', IndexIdParams),
 		async (c) => {
@@ -161,8 +163,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			summary: 'Get index stats history',
 			ok: IndexStatsResponse
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', IndexIdParams),
 		validator('query', StatsQuery),
 		async (c) => {
@@ -179,8 +181,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 204,
 			errors: [400]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		// The only mutation here that never touches Quickwit, so nothing else would 404 a bad index id.
 		withIndexMeta,
 		validator('param', IndexIdParams),
@@ -200,8 +202,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 204,
 			errors: [400, 404, 409]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		withIndexMeta,
 		validator('param', IndexIdParams),
 		validator('json', updateQuickwitConfigSchema),
@@ -220,8 +222,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 204,
 			errors: [409]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', IndexIdParams),
 		async (c) => {
 			const { indexId } = c.req.valid('param');
@@ -238,8 +240,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 201,
 			errors: [400, 409]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', IndexIdParams),
 		validator('json', createSourceSchema),
 		async (c) => {
@@ -257,8 +259,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			ok: SourceDetailSchema,
 			errors: [404]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		withIndexMeta,
 		validator('param', SourceParams),
 		async (c) => {
@@ -274,8 +276,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			ok: SourceDetailSchema,
 			errors: [400, 404]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', SourceParams),
 		validator('json', updateSourceSchema),
 		async (c) => {
@@ -293,8 +295,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 204,
 			errors: [404]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', SourceParams),
 		async (c) => {
 			const { indexId, sourceId } = c.req.valid('param');
@@ -310,8 +312,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 204,
 			errors: [409]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', SourceParams),
 		validator('json', ToggleSourceBody),
 		async (c) => {
@@ -329,8 +331,8 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			okStatus: 204,
 			errors: [409]
 		}),
-		requireUser,
-		requireAdmin,
+		requireSession,
+		requireOperator,
 		validator('param', SourceParams),
 		async (c) => {
 			const { indexId, sourceId } = c.req.valid('param');
@@ -344,10 +346,11 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Log explorer',
 			summary: 'Search logs',
 			ok: LogSearchResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }],
+			security: [{ cookieAuth: [] }],
 			errors: [429]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		readLimiter,
 		withIndexConfig,
 		validator('query', SearchQuery),
@@ -356,7 +359,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			const indexConfig = c.get('indexConfig');
 			const result = await withSearchAudit(
 				db,
-				auditActor(c.get('session').user.id, c.get('apiKeyActor')?.keyId),
+				auditActor(c.get('session').user.id),
 				indexConfig.indexId,
 				{ query: q.q ?? '', startTs: q.startTs, endTs: q.endTs },
 				() => searchLogs(quickwit, indexConfig, q),
@@ -371,10 +374,11 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Log explorer',
 			summary: 'Get log histogram',
 			ok: HistogramResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }],
+			security: [{ cookieAuth: [] }],
 			errors: [429]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		readLimiter,
 		withIndexConfig,
 		validator('query', HistogramQuery),
@@ -391,10 +395,11 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Log explorer',
 			summary: 'Get bulk field values',
 			ok: FieldValuesBulkResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }],
+			security: [{ cookieAuth: [] }],
 			errors: [429]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		readLimiter,
 		withIndexConfig,
 		validator('query', FieldValuesBulkQuery),
@@ -418,10 +423,11 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			tag: 'Log explorer',
 			summary: 'Get field values',
 			ok: FieldValuesResponse,
-			security: [{ personalBearer: [] }, { cookieAuth: [] }],
+			security: [{ cookieAuth: [] }],
 			errors: [429]
 		}),
-		requireUserOrPersonalKey(LOGS_READ),
+		requireSession,
+		authorize('search', { kind: 'observability_index' }),
 		readLimiter,
 		withIndexConfig,
 		validator('param', FieldParams),
@@ -446,7 +452,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			summary: 'Get index preferences',
 			ok: PreferencesResponse
 		}),
-		requireUser,
+		requireSession,
 		withIndexMeta,
 		validator('param', IndexIdParams),
 		async (c) => {
@@ -462,7 +468,7 @@ export const indexesRouter = new Hono<AuthedEnv>()
 			summary: 'Save index preferences',
 			ok: PreferencesResponse
 		}),
-		requireUser,
+		requireSession,
 		withIndexMeta,
 		validator('param', IndexIdParams),
 		validator('json', PutPreferencesBody),

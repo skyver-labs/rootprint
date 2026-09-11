@@ -4,7 +4,7 @@ import type { AuthedEnv } from '../env.js';
 import { db } from '../lib/db.js';
 import { describe, validator } from '../lib/openapi/describe.js';
 import { rejectTraceIndex } from '../middleware/reject-trace-index.js';
-import { requireUser } from '../middleware/require-user.js';
+import { requireSession } from '../middleware/require-session.js';
 import { withIndexMeta } from '../middleware/with-index.js';
 import { SavedViewListResponse, SavedViewResponse } from '../schemas/responses/views.js';
 import { createViewSchema, patchViewSchema, viewItemParamsSchema } from '../schemas/views.js';
@@ -17,7 +17,7 @@ import {
 import { IndexIdParams } from '../utils/params.js';
 
 export const viewsRouter = new Hono<AuthedEnv>()
-	.use('*', requireUser)
+	.use('*', requireSession)
 	.use('*', rejectTraceIndex)
 	.use('*', withIndexMeta)
 	.get(

@@ -3,12 +3,14 @@ import type { Handler } from 'hono';
 
 import { config } from '../../config.js';
 import { CONTENT_TYPE_PROTOBUF } from '../../constants.js';
-import type { KeyedEnv } from '../../env.js';
+import type { MachineEnv } from '../../env.js';
 import { describe } from '../../lib/openapi/describe.js';
 import { quickwitUrl } from '../../lib/quickwit.js';
 import { proxyToQuickwit, readUpstreamMessage } from '../../lib/quickwit-proxy.js';
-import { requireIngestKey } from '../../middleware/require-api-key.js';
-import { badRequest, HttpError, unsupportedMediaType } from '../../utils/http-error.js';
+import { requireMachine } from '../../middleware/require-machine.js';
+import { permitsSignal, resolveDestination } from '../../tunda/machine-token.js';
+import { badRequest, forbidden, HttpError, unsupportedMediaType } from '../../utils/http-error.js';
+import { INDEX_HEADER } from './destination.js';
 import { otlpSuccess } from '../../utils/otlp-response.js';
 
 type Signal = 'logs' | 'traces';
@@ -41,7 +43,7 @@ const pbErr = (description: string) => ({
 const OTLP_ERRORS = {
 	'400': pbErr('Upstream rejected the request'),
 	'401': pbErr('Missing ingest bearer token'),
-	'403': pbErr('Invalid ingest bearer token'),
+	'403': pbErr('Token rejected, or it grants no destination for this signal'),
 	'404': pbErr('Route not found'),
 	'413': pbErr('Payload too large'),
 	'415': {
@@ -74,8 +76,8 @@ function signalDescribe(signal: Signal) {
 			`OTLP/HTTP ${signal} exporter endpoint. Accepts only application/x-protobuf ` +
 			`(Export${proto}ServiceRequest). ` +
 			(signal === 'traces'
-				? 'Spans go to the single span store named by TRACE_INDEX_ID, not to the ingest key’s index. '
-				: 'The destination index comes from the ingest key. ') +
+				? 'Spans go to the single span store named by TRACE_INDEX_ID, not to a destination in the token. '
+				: `The destination index is one the producer's Tunda token names; when the token permits several, pick one with the \`${INDEX_HEADER}\` header. `) +
 			'Quickwit ' +
 			'answers with JSON, so the response is re-encoded as protobuf, preserving the ' +
 			'partial_success count of rejected records. ' +
@@ -111,7 +113,7 @@ function signalDescribe(signal: Signal) {
 	});
 }
 
-function signalHandler(signal: Signal): Handler<KeyedEnv> {
+function signalHandler(signal: Signal): Handler<MachineEnv> {
 	const { pkg, docsHint } = SIGNALS[signal];
 	const unsupportedMessage =
 		'Only application/x-protobuf is accepted. If you are using ' +
@@ -125,14 +127,38 @@ function signalHandler(signal: Signal): Handler<KeyedEnv> {
 			throw unsupportedMediaType(unsupportedMessage, 'CONTENT_TYPE_UNSUPPORTED');
 		}
 
-		const apiKey = c.get('apiKey');
-		if (signal !== 'traces' && apiKey.indexId === config.traceIndexId) {
-			throw badRequest(
-				'This key targets the span store. Send spans to POST /v1/traces instead.',
-				'INDEX_IS_TRACE_INDEX'
-			);
+		const token = c.get('machine');
+		if (!permitsSignal(token, signal)) {
+			throw forbidden(`This token may not write ${signal}`, 'INGEST_SIGNAL_NOT_PERMITTED');
 		}
-		const destinationIndex = signal === 'traces' ? config.traceIndexId : apiKey.indexId;
+
+		// Spans go to the one span store this deployment runs, so the token's scope is
+		// the whole decision for traces. Logs still resolve an index, because a producer
+		// may be permitted several and the wrong one is a corrupted audit trail.
+		let destinationIndex: string;
+		if (signal === 'traces') {
+			destinationIndex = config.traceIndexId;
+		} else {
+			const resolved = resolveDestination(
+				token,
+				signal,
+				config.environment,
+				c.req.header(INDEX_HEADER)
+			);
+			if (resolved === null) {
+				throw forbidden(
+					`No destination resolved. The token must grant exactly one ${signal} destination for this environment, or name one with the ${INDEX_HEADER} header.`,
+					'INGEST_DESTINATION_NOT_RESOLVED'
+				);
+			}
+			if (resolved === config.traceIndexId) {
+				throw badRequest(
+					'That destination is the span store. Send spans to POST /v1/traces instead.',
+					'INDEX_IS_TRACE_INDEX'
+				);
+			}
+			destinationIndex = resolved;
+		}
 		const upstreamUrl = quickwitUrl(`/api/v1/otlp/v1/${signal}`);
 		const headers: Record<string, string> = {
 			'content-type': CONTENT_TYPE_PROTOBUF,
@@ -160,6 +186,6 @@ function signalHandler(signal: Signal): Handler<KeyedEnv> {
 	};
 }
 
-export const otlpRouter = new Hono<KeyedEnv>()
-	.post('/logs', signalDescribe('logs'), requireIngestKey, signalHandler('logs'))
-	.post('/traces', signalDescribe('traces'), requireIngestKey, signalHandler('traces'));
+export const otlpRouter = new Hono<MachineEnv>()
+	.post('/logs', signalDescribe('logs'), requireMachine, signalHandler('logs'))
+	.post('/traces', signalDescribe('traces'), requireMachine, signalHandler('traces'));

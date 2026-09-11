@@ -1,29 +1,24 @@
-import {
-	Bot,
-	LayoutDashboard,
-	Activity,
-	Database,
-	KeyRound,
-	Send,
-	Users,
-	ShieldCheck,
-	UserRound
-} from 'lucide-svelte';
+import { LayoutDashboard, Activity, Database, Send } from 'lucide-svelte';
 import type { BreadcrumbSegment } from '$lib/types';
 
 export type NavItem = { href: string; label: string; icon: typeof LayoutDashboard };
-export type NavGroup = { label: string; adminOnly: boolean; items: NavItem[] };
+export type NavGroup = { label: string; items: NavItem[] };
 
-/** Settings sidebar nav tree. Shared with breadcrumbs so the two cannot drift. */
+/**
+ * Settings sidebar nav tree. Shared with breadcrumbs so the two cannot drift.
+ *
+ * Four entries are gone rather than hidden: Profile (password and personal API
+ * keys), API keys, Service accounts, Users and Authentication (Google and GitHub
+ * provider configuration). Each administered something this console no longer
+ * owns. A person is administered in Tunda; so is a producer's credential.
+ *
+ * `adminOnly` is gone with them. It filtered this list on a local `role` column,
+ * and there is no local role — see `routes/(app)/settings/(admin)/+layout.ts` for
+ * what replaces the gate and when.
+ */
 export const navGroups: NavGroup[] = [
 	{
-		label: 'Account',
-		adminOnly: false,
-		items: [{ href: '/settings/profile', label: 'Profile', icon: UserRound }]
-	},
-	{
 		label: 'Cluster',
-		adminOnly: true,
 		items: [
 			{ href: '/settings/overview', label: 'Overview', icon: LayoutDashboard },
 			{ href: '/settings/activity', label: 'Activity', icon: Activity }
@@ -31,20 +26,9 @@ export const navGroups: NavGroup[] = [
 	},
 	{
 		label: 'Data',
-		adminOnly: true,
 		items: [
 			{ href: '/settings/send-telemetry', label: 'Send logs & traces', icon: Send },
-			{ href: '/settings/api-keys', label: 'API keys', icon: KeyRound },
 			{ href: '/settings/indexes', label: 'Indexes', icon: Database }
-		]
-	},
-	{
-		label: 'Security',
-		adminOnly: true,
-		items: [
-			{ href: '/settings/authentication', label: 'Authentication', icon: ShieldCheck },
-			{ href: '/settings/service-accounts', label: 'Service accounts', icon: Bot },
-			{ href: '/settings/users', label: 'Users', icon: Users }
 		]
 	}
 ];
@@ -57,17 +41,18 @@ const SEND_TELEMETRY: BreadcrumbSegment = {
 	label: 'Send logs & traces',
 	href: '/settings/send-telemetry'
 };
-const AUTH: BreadcrumbSegment = { label: 'Authentication', href: '/settings/authentication' };
-const USERS: BreadcrumbSegment = { label: 'Users', href: '/settings/users' };
 
 type Params = Record<string, string | undefined>;
 
 /** Breadcrumb trails keyed by clean route pattern (`(group)` segments stripped). The only place breadcrumb structure lives — add new settings pages here. */
 const TRAILS: Record<string, (params: Params) => BreadcrumbSegment[]> = {
-	'/settings/profile': () => [ROOT, { label: 'Profile' }],
 	'/settings/overview': () => [ROOT, { label: 'Overview' }],
 	'/settings/activity': () => [ROOT, { label: 'Activity' }],
+	// Audit drill-downs. `api-keys/[id]` reaches search_audit rows recorded before
+	// the fork, when this console issued query keys — the rows survive, the
+	// credential does not.
 	'/settings/activity/api-keys/[id]': () => [ROOT, ACTIVITY, { label: 'API key' }],
+	'/settings/activity/users/[userId]': () => [ROOT, ACTIVITY, { label: 'Operator' }],
 	'/settings/indexes': () => [ROOT, { label: 'Indexes' }],
 	'/settings/indexes/_new': () => [ROOT, INDEXES, { label: 'New index' }],
 	'/settings/indexes/[indexId]': (p) => [
@@ -93,19 +78,12 @@ const TRAILS: Record<string, (params: Params) => BreadcrumbSegment[]> = {
 		{ label: p.indexId ?? 'Index', href: `/settings/indexes/${p.indexId}?tab=sources`, mono: true },
 		{ label: p.sourceId ?? 'Source', mono: true }
 	],
-	'/settings/api-keys': () => [ROOT, { label: 'API keys' }],
 	'/settings/send-telemetry': () => [ROOT, { label: 'Send logs & traces' }],
 	'/settings/send-telemetry/[integration]': (p) => [
 		ROOT,
 		SEND_TELEMETRY,
 		{ label: p.integration ?? 'Integration' }
-	],
-	'/settings/users': () => [ROOT, { label: 'Users' }],
-	'/settings/users/[userId]': () => [ROOT, USERS, { label: 'User' }],
-	'/settings/service-accounts': () => [ROOT, { label: 'Service accounts' }],
-	'/settings/authentication': () => [ROOT, { label: 'Authentication' }],
-	'/settings/authentication/github': () => [ROOT, AUTH, { label: 'GitHub' }],
-	'/settings/authentication/google': () => [ROOT, AUTH, { label: 'Google' }]
+	]
 };
 
 export function routeKey(routeId: string): string {
