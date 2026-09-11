@@ -3,11 +3,11 @@
 
 	let { data, children } = $props();
 
-	const user = $derived(data.session!.user);
+	const session = $derived(data.session!);
 </script>
 
 <div class="flex min-h-0 w-full flex-1">
-	<AppSidebar user={{ id: user.id, name: user.name, email: user.email }} />
+	<AppSidebar user={session} />
 
 	<div class="flex min-h-0 min-w-0 flex-1 flex-col">
 		{@render children()}

@@ -14,12 +14,11 @@ import { QuickwitError } from 'quickwit-js';
 
 import { config } from './config.js';
 import type { AppEnv, AuthedEnv } from './env.js';
-import { initAuth } from './lib/auth.js';
 import { connectDb, db, runMigrations } from './lib/db.js';
 import { logger } from './lib/logger.js';
 import { probeQuickwit, quickwit } from './lib/quickwit.js';
 import { isApiPath, requestLogging } from './middleware/request-logging.js';
-import { requireUser } from './middleware/require-user.js';
+import { requireSession } from './middleware/require-session.js';
 import { adminActivityRouter } from './routes/admin/activity.js';
 import { clusterRouter } from './routes/admin/cluster.js';
 import { metricsRouter } from './routes/admin/metrics.js';
@@ -28,18 +27,15 @@ import { healthRouter } from './routes/health.js';
 import { indexesRouter } from './routes/indexes.js';
 import { ndjsonRouter } from './routes/ingest/ndjson.js';
 import { otlpRouter } from './routes/ingest/otlp.js';
-import { settingsRouter } from './routes/settings.js';
 import { sharesRouter } from './routes/shares.js';
-import { apiKeysRouter } from './routes/api-keys.js';
 import { monitoringRouter } from './routes/monitoring.js';
 import { tracesRouter } from './routes/traces.js';
-import { usersRouter } from './routes/users.js';
-import { serviceAccountsRouter } from './routes/service-accounts.js';
 import type { ApiErrorBody } from './types.js';
 import { HttpError } from './utils/http-error.js';
 import { quickwitErrorToHttp } from './utils/quickwit-error.js';
 import { Code, otlpError, otlpErrorFromHttpError } from './utils/otlp-response.js';
-import { getBetterAuthSecret } from './lib/secret.js';
+import { verifyEnvelopeKey } from './tunda/crypto.js';
+import { initIssuers } from './tunda/issuers.js';
 import { startStatsCollector } from './services/index-stats.service.js';
 import { buildSpec } from './lib/openapi/spec.js';
 
@@ -47,7 +43,7 @@ import { buildSpec } from './lib/openapi/spec.js';
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/build');
 
 function withAuth<E extends AuthedEnv, S extends Schema>(router: Hono<E, S, ''>) {
-	return new Hono<AppEnv>().use('*', requireUser).route('/', router);
+	return new Hono<AppEnv>().use('*', requireSession).route('/', router);
 }
 
 function errorJson(c: Context, body: ApiErrorBody['error'], status: ContentfulStatusCode) {
@@ -165,11 +161,12 @@ export const routes = app
 	.route('/api/admin/metrics', withAuth(metricsRouter))
 	.route('/api/admin/cluster', withAuth(clusterRouter))
 	.route('/api/admin/activity', withAuth(adminActivityRouter))
-	.route('/api/users', withAuth(usersRouter))
-	.route('/api/service-accounts', withAuth(serviceAccountsRouter))
-	.route('/api/api-keys', withAuth(apiKeysRouter))
+	// /api/users, /api/service-accounts, /api/api-keys and /api/settings are gone
+	// rather than moved. The first three administered an identity this console
+	// owned; the fourth configured Google and GitHub sign-in. People and machine
+	// credentials are administered in Tunda, and a console screen that edited them
+	// would be editing a copy.
 	.route('/api/shares', withAuth(sharesRouter))
-	.route('/api/settings', withAuth(settingsRouter))
 	.route('/api/ingest', ndjsonRouter)
 	.route('/v1', otlpRouter);
 
@@ -201,12 +198,26 @@ app.get('*', serveStatic({ path: 'index.html', root: webRoot }));
 
 async function main(): Promise<void> {
 	logger.info('booting api');
+
+	// Configuration first, before the database and before the listener.
+	//
+	// Both of these throw on a missing or malformed value, and both are fatal.
+	// A console without a configured Tunda issuer has no authentication authority
+	// at all; one without a session key cannot read back a session it wrote. The
+	// only safe thing either can do with a request is refuse it, so it does not
+	// boot.
+	//
+	// Ordered before `connectDb()` deliberately. These checks cost nothing and
+	// cannot fail transiently, so running them first means a misconfigured
+	// deployment names the missing variable instead of migrating a database it
+	// will not be able to serve — and instead of coming up healthy and failing at
+	// the first callback, which is what a lazily-read key produces.
+	initIssuers();
+	await verifyEnvelopeKey();
+
 	await connectDb();
 	await runMigrations();
-
-	const secret = await getBetterAuthSecret(db);
 	await probeQuickwit();
-	await initAuth(secret);
 
 	const statsCollector = startStatsCollector(db, quickwit);
 

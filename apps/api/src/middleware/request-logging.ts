@@ -23,8 +23,7 @@ export const requestLogging: MiddlewareHandler<AppEnv> = async (c, next) => {
 		statusCode = c.res.status;
 	} finally {
 		const session = c.get('session');
-		const apiKey = c.get('apiKey');
-		const apiKeyActor = c.get('apiKeyActor');
+		const machine = c.get('machine');
 		logger.info(
 			{
 				requestId: c.get('requestId'),
@@ -33,9 +32,10 @@ export const requestLogging: MiddlewareHandler<AppEnv> = async (c, next) => {
 				path: c.req.path,
 				statusCode,
 				durationMs: Math.round(performance.now() - startedAt),
-				...(session ? { userId: session.user.id } : {}),
-				...(apiKeyActor ? { apiKeyId: apiKeyActor.keyId } : {}),
-				...(apiKey ? { ingestApiKeyId: apiKey.id, indexId: apiKey.indexId } : {})
+				...(session ? { principalId: session.user.id } : {}),
+				// The authenticated producer, from the token — never `service.name` from
+				// the payload, which is written by whatever sent the batch.
+				...(machine ? { producer: machine.producer } : {})
 			},
 			'request completed'
 		);

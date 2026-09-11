@@ -1,0 +1,146 @@
+name: Tunda invariants
+
+# The property this fork exists to establish, asserted on every change:
+#
+#   No code path in this console can produce a session from anything other than a
+#   live Tunda authentication.
+#
+# These checks exist because the most likely way that property is undone is not a
+# decision — it is an upstream merge quietly restoring a provider, or a well-meant
+# change adding a password reset "just for the admin account". Both look ordinary
+# in a diff and neither breaks a test.
+#
+# See FORK.md.
+
+on:
+  push:
+    branches: [main, 'tunda/**']
+  pull_request:
+    branches: [main]
+  # Called as a gate by `tunda-publish.yml`, so a failing invariant produces no
+  # image rather than a red tick beside a green one.
+  workflow_call:
+
+concurrency:
+  # `github.workflow` is in the key because this runs two ways on the same ref: on
+  # its own from a push, and as the gate `tunda-publish.yml` calls. Keyed on the
+  # ref alone the two collide, and one cancels the other — which is what happened
+  # on the first real run: the gating copy passed and published an image while the
+  # standalone copy showed a red ✗ on the same commit.
+  #
+  # It fails safe either way, since a cancelled gate fails `needs:` and publishes
+  # nothing. The cost is worse than a wrong answer: a CI signal that is red when
+  # everything is correct is one people stop reading.
+  #
+  # In a called workflow `github.workflow` is the CALLER's name, so the gate and
+  # the standalone run land in different groups.
+  group: tunda-invariants-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-second-identity-authority:
+    name: No second identity authority
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Better Auth is not a dependency
+        run: |
+          # The library, not just the screens. A removed screen with the library
+          # still installed is a removed screen — the wildcard route that serves
+          # its entire HTTP surface is four lines away.
+          if grep -rn '"better-auth"\|"@better-auth/' apps/*/package.json package.json 2>/dev/null; then
+            echo "::error::better-auth is back in a manifest. See FORK.md."
+            exit 1
+          fi
+          if grep -n '"better-auth\|@better-auth/' bun.lock 2>/dev/null; then
+            echo "::error::better-auth is back in the lockfile. See FORK.md."
+            exit 1
+          fi
+
+      - name: Nothing imports it either
+        run: |
+          # The manifest check above is necessary and not sufficient. A stale
+          # package store kept `better-auth/api` resolving in `utils/http-error.ts`
+          # for a full workstream after the dependency left the lockfile, and the
+          # typecheck passed the whole time. Grep the source too.
+          # `--exclude=*.test.ts`: no-local-authority.test.ts greps for these same
+          # strings, and a check that fails on the test asserting it is a check
+          # somebody deletes.
+          if grep -rn --exclude='*.test.ts' "from ['\"]better-auth\|from ['\"]@better-auth/" apps/*/src 2>/dev/null; then
+            echo "::error::a source file still imports better-auth. See FORK.md."
+            exit 1
+          fi
+
+      - name: No password hashing anywhere
+        run: |
+          # This console verifies no credential. A password hasher appearing here
+          # means something is storing one, which means something can authenticate
+          # without Tunda.
+          if grep -rn --exclude='*.test.ts' "from 'bcrypt'\|from \"bcrypt\"\|from 'argon2'\|from \"argon2\"\|Bun\.password" \
+               apps/*/src 2>/dev/null; then
+            echo "::error::a password-hashing call appeared. This console stores no credential."
+            exit 1
+          fi
+
+      - name: The Better Auth schema stays deleted
+        run: |
+          if [ -f apps/api/src/db/auth.schema.ts ]; then
+            echo "::error::apps/api/src/db/auth.schema.ts is back: user, session, account, apikey."
+            exit 1
+          fi
+
+      - name: No migration recreates the identity tables
+        run: |
+          # A migration is how these would come back without a source file to
+          # notice — an upstream merge bringing its own drizzle output.
+          #
+          # Only migrations after the drop are checked. 0000 and 0013 created these
+          # tables when the console still owned them, and those files are history:
+          # a check that read them would fail on every run, which is a check that
+          # gets deleted rather than one that protects anything.
+          DROP_MIGRATION=23
+          failed=0
+          for file in apps/api/drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
+            index=$(basename "$file" | cut -c1-4 | sed 's/^0*//')
+            [ "${index:-0}" -le "$DROP_MIGRATION" ] && continue
+            if grep -niE 'create table (if not exists )?"?(account|verification|apikey|user|session|api_key|invite_token)"?' "$file"; then
+              echo "::error file=$file::recreates an identity table dropped in 0023."
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - name: The removed authentication routes stay removed
+        run: |
+          # Each of these was a way to obtain a session without Tunda: bootstrap an
+          # admin, redeem an invite, set a password, or enumerate social providers.
+          for route in setup-admin verify-invite setup-password; do
+            if grep -rn "'/$route'\|\"/$route\"" apps/api/src/routes 2>/dev/null; then
+              echo "::error::the /$route authentication path is back. See FORK.md."
+              exit 1
+            fi
+          done
+
+      - name: The invariant tests pass
+        run: |
+          # `apps/api/src/tunda/no-local-authority.test.ts` asserts from the inside
+          # what the greps above assert from the outside: the shape of the tables
+          # this console owns, and the size of its authentication surface.
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun install --frozen-lockfile
+          bun --filter api test
+
+      - name: Every Tunda divergence is registered
+        run: |
+          # A file under src/tunda/ that FORK.md does not mention is a divergence
+          # nobody wrote down — which is how a fork becomes unmergeable.
+          missing=0
+          for file in $(find apps/api/src/tunda -name '*.ts' 2>/dev/null | sort); do
+            if ! grep -q "$(basename "$file")" FORK.md; then
+              echo "::error file=$file::not listed in FORK.md's divergence register"
+              missing=1
+            fi
+          done
+          exit $missing

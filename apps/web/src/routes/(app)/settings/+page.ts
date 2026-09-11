@@ -1,8 +1,14 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ parent }) => {
-	const { session } = await parent();
-	const role = session?.user?.role;
-	redirect(307, role === 'admin' ? '/settings/overview' : '/settings/profile');
+/**
+ * Settings has one landing page now.
+ *
+ * Upstream branched here on `session.user.role`, sending an administrator to the
+ * overview and everybody else to their profile. The profile page was account
+ * management — password, personal API keys — and is gone with the rest of the
+ * local identity; the role it branched on is gone too.
+ */
+export const load: PageLoad = async () => {
+	redirect(307, '/settings/overview');
 };

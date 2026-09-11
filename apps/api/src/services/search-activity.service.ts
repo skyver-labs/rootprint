@@ -1,7 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
 import type { Db } from '../lib/db.js';
-import { apikey, user } from '../db/schema.js';
+import { consolePrincipal } from '../db/schema.js';
 import type { ActivityWindow } from '../schemas/admin-activity.js';
 import type {
 	ActorIndexRow,
@@ -151,28 +151,28 @@ export async function getTopActors(
 		indexes: r.indexes
 	}));
 
-	const userIds = rows.filter((r) => r.kind === 'user').map((r) => r.id);
-	const apiKeyIds = rows.filter((r) => r.kind === 'apiKey').map((r) => r.id);
-	const userLabels = new Map<string, string>();
-	const apiKeyLabels = new Map<string, string>();
-	if (userIds.length > 0) {
+	// Labelled from `console_principal.display_name` — which is written from the
+	// last sign-in and is cosmetic by design. An unlabelled row renders as its
+	// principal id, which is the identifier Tunda knows the person by anyway; the
+	// alternative, storing an email here to make the table prettier, would put a
+	// second copy of an attribute Tunda owns in a place nobody would think to
+	// update.
+	//
+	// `apiKey` rows are historical: they were recorded when this console issued
+	// query keys, the table they named is dropped, and they carry no label.
+	const principalIds = rows.filter((r) => r.kind === 'user').map((r) => r.id);
+	const labels = new Map<string, string>();
+	if (principalIds.length > 0) {
 		const rs = await db
-			.select({ id: user.id, email: user.email })
-			.from(user)
-			.where(inArray(user.id, userIds));
-		for (const r of rs) userLabels.set(r.id, r.email);
-	}
-	if (apiKeyIds.length > 0) {
-		const rs = await db
-			.select({ id: apikey.id, name: apikey.name })
-			.from(apikey)
-			.where(inArray(apikey.id, apiKeyIds));
-		for (const r of rs) if (r.name) apiKeyLabels.set(r.id, r.name);
+			.select({ id: consolePrincipal.id, displayName: consolePrincipal.displayName })
+			.from(consolePrincipal)
+			.where(inArray(consolePrincipal.id, principalIds));
+		for (const r of rs) if (r.displayName) labels.set(r.id, r.displayName);
 	}
 
 	return rows.map((r) => ({
 		...r,
-		label: r.kind === 'user' ? (userLabels.get(r.id) ?? null) : (apiKeyLabels.get(r.id) ?? null)
+		label: r.kind === 'user' ? (labels.get(r.id) ?? null) : null
 	}));
 }
 
@@ -188,18 +188,17 @@ async function resolveActorIdentity(
 ): Promise<{ displayName: string | null; email: string | null } | null> {
 	if (actor.kind === 'user') {
 		const rows = await db
-			.select({ id: user.id, name: user.name, email: user.email })
-			.from(user)
-			.where(eq(user.id, actor.userId));
-		const u = rows[0];
-		return u ? { displayName: u.name ?? null, email: u.email ?? null } : null;
+			.select({ id: consolePrincipal.id, displayName: consolePrincipal.displayName })
+			.from(consolePrincipal)
+			.where(eq(consolePrincipal.id, actor.userId));
+		const principal = rows[0];
+		// `email` stays in the shape and stays null. The console does not hold one:
+		// it is Tunda's attribute, and a copy here would be a copy nothing refreshes.
+		return principal ? { displayName: principal.displayName ?? null, email: null } : null;
 	}
-	const rows = await db
-		.select({ id: apikey.id, name: apikey.name })
-		.from(apikey)
-		.where(eq(apikey.id, actor.apiKeyId));
-	const t = rows[0];
-	return t ? { displayName: t.name ?? null, email: null } : null;
+	// A key this console no longer issues and no longer stores. The audit rows that
+	// name one survive; the identity behind them does not.
+	return null;
 }
 
 export async function getActorSummary(

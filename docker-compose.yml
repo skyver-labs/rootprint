@@ -12,9 +12,38 @@ services:
       - DATABASE_URL=postgres://rootprint:rootprint@db:5432/rootprint
       - QUICKWIT_URL=http://quickwit:7280
       - ORIGIN=http://localhost:8282
-      # Optional: a stable 32+ char secret for production. If unset, one is
-      # generated and persisted to the database on first boot.
-      # - BETTER_AUTH_SECRET=replace-with-a-32-char-random-string
+
+      # --- Tunda, and all of it required --------------------------------------
+      #
+      # This console authenticates nobody. Every session comes from a Tunda
+      # authorization-code flow, so without a configured issuer it has no
+      # authentication authority at all and the only safe thing it can do with a
+      # request is refuse it — which is why it refuses to start instead.
+      #
+      # It checks these before it connects to Postgres, so a missing one names
+      # itself rather than being discovered at the first sign-in.
+      #
+      # See FORK.md. Replace every value below.
+      # The complete issuer, exactly as a token's `iss` carries it — not an
+      # origin. Compared verbatim, so there is nothing to compose and nothing to
+      # disagree with.
+      - TUNDA_ISSUER=https://id.example.com/t/tnt_REPLACE_ME
+      - TUNDA_CLIENT_ID=observability-console
+      - TUNDA_CLIENT_SECRET=replace-me
+      - TUNDA_AUDIENCE=https://observability.example.com
+      - TUNDA_REDIRECT_URI=http://localhost:8282/api/auth/callback
+
+      # Which deployment this is, as a telemetry producer's token names it. A
+      # token issued for `staging` resolves no destination here when this says
+      # `production`, and the batch is refused.
+      - TUNDA_ENVIRONMENT=production
+
+      # 32 bytes of base64, and NEVER generated: openssl rand -base64 32
+      #
+      # A generated key would make every session on every other replica
+      # undecryptable and would rotate on each restart, which presents as
+      # "everybody is randomly signed out" rather than as a missing secret.
+      - CONSOLE_SESSION_KEY=replace-me-with-32-bytes-of-base64
     ports:
       - '8282:8282'
 

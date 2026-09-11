@@ -1,4 +1,3 @@
-import { isAPIError } from 'better-auth/api';
 import type { ApiErrorDetail } from '../types.js';
 
 export class HttpError extends Error {
@@ -50,9 +49,8 @@ export function isUniqueViolation(err: unknown): boolean {
 	);
 }
 
-export function fromAuthApiError(err: unknown, fallback: string): HttpError {
-	if (isAPIError(err)) {
-		return new HttpError(err.statusCode, 'AUTH_API_ERROR', err.body?.message || fallback);
-	}
-	throw err;
-}
+// `fromAuthApiError` was here: it translated a Better Auth `APIError` into this
+// console's error shape, for the routes that called Better Auth's server API.
+// Those routes are gone. The import outlived them, and kept resolving from a
+// stale package store long after the dependency left the lockfile — which is why
+// `no-local-authority.test.ts` greps the source rather than trusting the manifest.

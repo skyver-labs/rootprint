@@ -11,8 +11,11 @@ export const load = (async ({ parent }) => {
 
 	const { session } = await parent();
 	const hasSeenDocuments = readString(HAS_SEEN_DOCUMENTS_KEY) === '1';
+	// Was gated on `session.user.role === 'admin'`. There is no local role to read,
+	// and this only decides whether to show a first-run hint — the call itself is
+	// authorized server-side, and `.catch(() => null)` already handles a refusal.
 	const documentStatusPromise =
-		session?.user.role === 'admin' && !hasSeenDocuments
+		session !== null && !hasSeenDocuments
 			? getClusterDocumentStatus().catch(() => null)
 			: Promise.resolve(null);
 	const [summaries, documentStatus] = await Promise.all([indexesPromise, documentStatusPromise]);

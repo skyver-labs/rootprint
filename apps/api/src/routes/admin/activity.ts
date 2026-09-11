@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { AuthedEnv } from '../../env.js';
 import { db } from '../../lib/db.js';
 import { describe, validator } from '../../lib/openapi/describe.js';
-import { requireAdmin } from '../../middleware/require-admin.js';
+import { requireOperator } from '../../middleware/authorize.js';
 import { RecentQuery, TopActorsQuery, WindowQuery } from '../../schemas/admin-activity.js';
 import {
 	ActorIndexesResponse,
@@ -27,7 +27,7 @@ import { PersonalApiKeyIdParams, UserIdParams } from '../../utils/params.js';
 
 // Routes are chained so Hono propagates request/response types for the RPC client.
 export const adminActivityRouter = new Hono<AuthedEnv>()
-	.use('*', requireAdmin)
+	.use('*', requireOperator)
 	.get(
 		'/summary',
 		describe({

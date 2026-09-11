@@ -2,9 +2,11 @@
 	import { page } from '$app/state';
 	import { navGroups } from '$lib/settings-nav';
 
-	const role = $derived(page.data.session?.user?.role);
-	const isAdmin = $derived(role === 'admin');
-	const visibleGroups = $derived(navGroups.filter((g) => !g.adminOnly || isAdmin));
+	// Every group, for everybody signed in. The `adminOnly` filter read a local
+	// `role` column that no longer exists; each destination authorizes its own
+	// requests, so a link somebody may not use renders as a refusal rather than as
+	// a blank page.
+	const visibleGroups = $derived(navGroups);
 	const path = $derived(page.url.pathname);
 </script>
 

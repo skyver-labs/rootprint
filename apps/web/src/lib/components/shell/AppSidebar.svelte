@@ -6,10 +6,9 @@
 	import UserMenu from './UserMenu.svelte';
 	import HelpMenu from './HelpMenu.svelte';
 	import { readString, writeString } from '$lib/utils/safe-storage';
+	import type { Session } from '$lib/api/session';
 
-	type User = { id: string; name: string | null; email: string };
-
-	let { user }: { user: User } = $props();
+	let { user }: { user: Session } = $props();
 
 	const STORAGE_KEY = 'rootprint:sidebar-collapsed';
 

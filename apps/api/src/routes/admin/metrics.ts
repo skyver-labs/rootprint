@@ -2,12 +2,12 @@ import { Hono } from 'hono';
 
 import type { AuthedEnv } from '../../env.js';
 import { describe } from '../../lib/openapi/describe.js';
-import { requireAdmin } from '../../middleware/require-admin.js';
+import { requireOperator } from '../../middleware/authorize.js';
 import { QuickwitSnapshotResponse } from '../../schemas/responses/admin.js';
 import { getQuickwitMetrics, getQuickwitMetricsRaw } from '../../services/metrics.service.js';
 
 export const metricsRouter = new Hono<AuthedEnv>()
-	.use('*', requireAdmin)
+	.use('*', requireOperator)
 	.get(
 		'/',
 		describe({
