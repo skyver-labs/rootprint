@@ -189,6 +189,10 @@ export const authRouter = new Hono<AppEnv>()
 		return c.json({
 			principalId: session.principalId,
 			displayName: session.displayName,
+			// The tenant, so the console can say whose plane this is. Rendering
+			// only, like displayName: it grants nothing and is re-derived from a
+			// verified token on every request.
+			tenantId: session.tundaTenantId,
 			// What Tunda proved, relayed unchanged. The browser renders from it and
 			// decides nothing: every server call is authorized again.
 			acr: session.acr,

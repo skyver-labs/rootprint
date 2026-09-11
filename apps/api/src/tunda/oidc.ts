@@ -2,6 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import { db } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
+import { clientAssertion } from './client-assertion.js';
 import { constantTimeEquals, digest, open, randomToken, seal } from './crypto.js';
 import { theIssuer, type TundaIssuer } from './issuers.js';
 import { consoleAuthTransaction } from './schema.js';
@@ -198,16 +199,14 @@ async function exchange(issuer: TundaIssuer, body: Record<string, string>): Prom
 	// The internal address, not the public issuer: this is a back-channel call.
 	// `authorizeUrl` above deliberately uses the public one, because that is a URL
 	// a person's browser has to resolve.
+	// A freshly signed assertion per request, in the body — not a secret in a
+	// Basic header. See `client-assertion.ts`: nothing reusable crosses the wire,
+	// so capturing this exchange buys an attacker one expired, already-spent
+	// credential.
 	const response = await fetch(`${issuer.internalIssuer}/oauth2/token`, {
 		method: 'POST',
-		headers: {
-			'content-type': 'application/x-www-form-urlencoded',
-			// RFC 6749 §2.3.1 requires both halves form-urlencoded before base64.
-			authorization: `Basic ${Buffer.from(
-				`${encodeURIComponent(issuer.clientId)}:${encodeURIComponent(issuer.clientSecret)}`
-			).toString('base64')}`
-		},
-		body: new URLSearchParams(body).toString()
+		headers: { 'content-type': 'application/x-www-form-urlencoded' },
+		body: new URLSearchParams({ ...body, ...(await clientAssertion(issuer)) }).toString()
 	});
 
 	if (!response.ok) {

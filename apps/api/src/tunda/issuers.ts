@@ -54,7 +54,15 @@ export type TundaIssuer = {
 	readonly internalIssuer: string;
 
 	readonly clientId: string;
-	readonly clientSecret: string;
+	/**
+	 * The `kid` of the key this console signs client assertions with.
+	 *
+	 * Sent in the assertion header so Tunda knows which registered key to check
+	 * against. That is what makes rotation possible without a flag day: register
+	 * the new key, switch this, remove the old one — three deployments, none of
+	 * which has to happen at the same instant as another.
+	 */
+	readonly keyId: string;
 
 	/**
 	 * The audience this console's tokens are minted for.
@@ -131,7 +139,7 @@ function buildIssuer(): TundaIssuer {
 		internalIssuer,
 		issuer,
 		clientId: requireEnv('TUNDA_CLIENT_ID'),
-		clientSecret: requireEnv('TUNDA_CLIENT_SECRET'),
+		keyId: requireEnv('TUNDA_CLIENT_KEY_ID'),
 		audience: requireEnv('TUNDA_AUDIENCE'),
 		scopes: ['openid', 'profile', 'offline_access', 'observability.read'],
 		redirectUri: requireEnv('TUNDA_REDIRECT_URI'),

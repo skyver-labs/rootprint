@@ -76,7 +76,8 @@ Configuration this fork requires and upstream does not:
 TUNDA_ISSUER            the COMPLETE tenant issuer, as a token's `iss` carries
                         it: https://id.example.com/t/tnt_…  (not an origin)
 TUNDA_CLIENT_ID         this console's registration
-TUNDA_CLIENT_SECRET     until private_key_jwt is available
+TUNDA_CLIENT_KEY_ID     the kid Tunda registered for this console
+TUNDA_CLIENT_PRIVATE_KEY  PKCS#8 PEM. No shared secret: private_key_jwt
 TUNDA_REDIRECT_URI      …/api/auth/callback
 CONSOLE_SESSION_KEY     32 bytes, base64. Never generated; a missing one refuses to start
 TUNDA_ENVIRONMENT       which deployment this is, as producer tokens name it

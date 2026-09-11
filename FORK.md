@@ -105,6 +105,7 @@ a change nobody decided.
 | `apps/api/src/tunda/schema.ts`                  | `console_principal`, `console_session`, `console_auth_transaction`                                                           |
 | `apps/api/src/middleware/require-session.ts`    | Cookie → session → token freshness                                                                                           |
 | `apps/api/src/tunda/machine-token.ts`           | A producer's `client_credentials` token: signed destinations, per-signal scopes, no session                                  |
+| `apps/api/src/tunda/client-assertion.ts`        | private_key_jwt: a fresh, single-use signed assertion per back-channel call, instead of a shared secret                      |
 | `apps/api/src/tunda/no-local-authority.test.ts` | The central property, asserted: table shapes, sealed columns, the size of the authentication surface                         |
 | `apps/api/src/middleware/require-machine.ts`    | Bearer → verified producer, on the ingest paths only                                                                         |
 | `apps/api/src/middleware/authorize.ts`          | Phase 1: authenticated is authorized, stated as such. Phase 2: the PDP call                                                  |

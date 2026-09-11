@@ -10,6 +10,17 @@
 	// attribute — so somebody whose last sign-in carried no display name is
 	// identified here by the same id Tunda knows them by.
 	const label = $derived(user.displayName ?? user.principalId);
+
+	// The tenant, shortened. A `tnt_01K3ST…0081` in full is 30 characters of
+	// mostly-constant prefix in a 64-pixel-wide menu, and the distinguishing part
+	// is the tail. The title attribute carries the whole thing for anyone who
+	// needs to copy it.
+	const tenant = $derived(user.tenantId);
+	const tenantShort = $derived(
+		user.tenantId.length > 14
+			? `${user.tenantId.slice(0, 8)}…${user.tenantId.slice(-4)}`
+			: user.tenantId
+	);
 	const initials = $derived(avatarInitials(user.displayName));
 	const color = $derived(avatarColor(user.principalId));
 
@@ -48,7 +59,7 @@
 	{#if !collapsed}
 		<span class="min-w-0 flex-1 text-left">
 			<span class="block truncate text-sm">{label}</span>
-			<span class="text-subtle block truncate text-xs">Signed in with Tunda</span>
+			<span class="text-subtle block truncate text-xs" title={tenant}>{tenantShort}</span>
 		</span>
 		<ChevronsUpDown class="text-base-content/40 h-3.5 w-3.5 shrink-0" />
 	{/if}
@@ -62,7 +73,14 @@
 >
 	<div class="border-line border-b px-4 py-3">
 		<p class="text-sm">{label}</p>
-		<p class="text-base-content/60 mt-0.5 font-mono text-xs">{user.acr}</p>
+		<!--
+			The tenant, not the acr. `urn:tunda:aal:2` is precise and means nothing to
+			the person reading it — it answers "how strongly did you authenticate",
+			which nobody asks, while "which tenant am I looking at" is the question
+			somebody with access to several actually has. The assurance is still on
+			the session for the step-up decision; it just is not a label.
+		-->
+		<p class="text-base-content/60 mt-0.5 font-mono text-xs" title={tenant}>{tenant}</p>
 	</div>
 	<div class="p-2">
 		<button
