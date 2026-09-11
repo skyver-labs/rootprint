@@ -1,4 +1,12 @@
-# Rootprint
+# Rootprint — the Tunda fork
+
+> This is [`skyver-labs/rootprint`](https://github.com/skyver-labs/rootprint), a fork of
+> [`rootprint/rootprint`](https://github.com/rootprint/rootprint) in which **Tunda is the only way
+> to obtain a session**. The local identity system is deleted rather than disabled: no passwords, no
+> social login, no console-issued API keys, no local roles. **[FORK.md](FORK.md)** is the divergence
+> register and the authority on what differs.
+>
+> Everything below is upstream's own README, corrected where the fork made it untrue.
 
 [![Bun](https://img.shields.io/badge/Bun-%23000000.svg?logo=bun&logoColor=white)](#)
 [![Hono](https://img.shields.io/badge/Hono-%23E36002.svg?logo=hono&logoColor=white)](#)
@@ -30,8 +38,10 @@ traces, team access control, and Quickwit-powered search without sending telemet
 - **Traces** - View OpenTelemetry traces alongside your logs.
 - **Incident-ready UI** - Use severity-aware rows, histograms, field filters, saved views,
   detail drawers, share links, and result exports.
-- **Team access** - Invite users, manage roles, create scoped ingest keys, add service accounts
-  and personal API keys, and enable Google or GitHub OAuth.
+- **Team access** - People sign in with Tunda, and are administered there. This fork issues no
+  credential of its own: no password, no invite, no personal or service-account API key, and no
+  local role. A telemetry producer authenticates as a registered Tunda client whose permitted
+  destinations are signed into its token.
 - **Admin controls** - Manage indexes, sources, field configuration, activity, and
   Quickwit.
 - **Open source** - Apache-2.0 licensed. Run it, inspect it, fork it.
@@ -51,13 +61,28 @@ http://localhost:8282
 
 Then:
 
-1. Create the first admin account.
-2. Create an ingest key in **Settings -> API keys**.
-3. Send logs to the bundled OpenTelemetry index (`otel-logs-v0_9`). The same key ships spans to
-   `POST /v1/traces`.
+1. Sign in. You are sent to Tunda, and you come back with a session — there is no account to create
+   here, and no first-administrator bootstrap.
+2. Register a telemetry producer as a Tunda client with the `observability.logs.ingest` scope and
+   the destinations it may write to. The console cannot mint one; see **Settings -> Send logs &
+   traces** for the exporter configuration.
+3. Send logs to the bundled OpenTelemetry index (`otel-logs-v0_9`). A producer granted a traces
+   destination ships spans to `POST /v1/traces`.
 4. Search them from the Rootprint UI.
 
-Full install guide: https://docs.rootprint.io/install/docker-compose
+Configuration this fork requires and upstream does not:
+
+```text
+TUNDA_ISSUER            the tenant issuer, e.g. https://id.example.com/t/tnt_…
+TUNDA_CLIENT_ID         this console's registration
+TUNDA_CLIENT_SECRET     until private_key_jwt is available
+TUNDA_REDIRECT_URI      …/api/auth/callback
+CONSOLE_SESSION_KEY     32 bytes, base64. Never generated; a missing one refuses to start
+TUNDA_ENVIRONMENT       which deployment this is, as producer tokens name it
+```
+
+Upstream's install guide still applies to everything else:
+https://docs.rootprint.io/install/docker-compose
 
 ## Documentation
 

@@ -129,6 +129,7 @@ a change nobody decided.
 | `apps/web/src/routes/+layout.ts`                        | Session lookup and the sign-in redirect. There is no first-admin bootstrap to ask about                              |
 | `apps/web/src/lib/settings-nav.ts`                      | Five destinations removed; `adminOnly` removed with the role it read                                                 |
 | `apps/web/.../send-telemetry/**`                        | The wizard shows a placeholder token and explains where a real one comes from                                        |
+| `README.md`                                             | The banner, and the two sections that told people to create an admin account and mint an ingest key                  |
 
 ---
 
