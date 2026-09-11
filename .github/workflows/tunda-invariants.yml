@@ -1,0 +1,96 @@
+name: Tunda invariants
+
+# The property this fork exists to establish, asserted on every change:
+#
+#   No code path in this console can produce a session from anything other than a
+#   live Tunda authentication.
+#
+# These checks exist because the most likely way that property is undone is not a
+# decision — it is an upstream merge quietly restoring a provider, or a well-meant
+# change adding a password reset "just for the admin account". Both look ordinary
+# in a diff and neither breaks a test.
+#
+# See FORK.md.
+
+on:
+  push:
+    branches: [main, 'tunda/**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: tunda-invariants-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-second-identity-authority:
+    name: No second identity authority
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Better Auth is not a dependency
+        run: |
+          # The library, not just the screens. A removed screen with the library
+          # still installed is a removed screen — the wildcard route that serves
+          # its entire HTTP surface is four lines away.
+          if grep -rn '"better-auth"\|"@better-auth/' apps/*/package.json package.json 2>/dev/null; then
+            echo "::error::better-auth is back in a manifest. See FORK.md."
+            exit 1
+          fi
+          if grep -n '"better-auth\|@better-auth/' bun.lock 2>/dev/null; then
+            echo "::error::better-auth is back in the lockfile. See FORK.md."
+            exit 1
+          fi
+
+      - name: No password hashing anywhere
+        run: |
+          # This console verifies no credential. A password hasher appearing here
+          # means something is storing one, which means something can authenticate
+          # without Tunda.
+          if grep -rn "from 'bcrypt'\|from \"bcrypt\"\|from 'argon2'\|from \"argon2\"\|Bun\.password" \
+               apps/*/src 2>/dev/null; then
+            echo "::error::a password-hashing call appeared. This console stores no credential."
+            exit 1
+          fi
+
+      - name: The Better Auth schema stays deleted
+        run: |
+          if [ -f apps/api/src/db/auth.schema.ts ]; then
+            echo "::error::apps/api/src/db/auth.schema.ts is back: user, session, account, apikey."
+            exit 1
+          fi
+
+      - name: No migration recreates the identity tables
+        run: |
+          # A migration is how these would come back without a source file to
+          # notice — an upstream merge bringing its own drizzle output.
+          if grep -rniE 'create table (if not exists )?"?(account|verification|apikey)"?' \
+               apps/api/drizzle 2>/dev/null; then
+            echo "::error::a migration recreates a Better Auth identity table."
+            exit 1
+          fi
+
+      - name: The removed authentication routes stay removed
+        run: |
+          # Each of these was a way to obtain a session without Tunda: bootstrap an
+          # admin, redeem an invite, set a password, or enumerate social providers.
+          for route in setup-admin verify-invite setup-password; do
+            if grep -rn "'/$route'\|\"/$route\"" apps/api/src/routes 2>/dev/null; then
+              echo "::error::the /$route authentication path is back. See FORK.md."
+              exit 1
+            fi
+          done
+
+      - name: Every Tunda divergence is registered
+        run: |
+          # A file under src/tunda/ that FORK.md does not mention is a divergence
+          # nobody wrote down — which is how a fork becomes unmergeable.
+          missing=0
+          for file in $(find apps/api/src/tunda -name '*.ts' 2>/dev/null | sort); do
+            if ! grep -q "$(basename "$file")" FORK.md; then
+              echo "::error file=$file::not listed in FORK.md's divergence register"
+              missing=1
+            fi
+          done
+          exit $missing
