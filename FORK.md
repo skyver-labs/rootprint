@@ -110,6 +110,7 @@ a change nobody decided.
 | `apps/api/src/tunda/pdp.ts`                     | The PDP client: 250ms deadline, no roles sent, fail closed on everything but a clean permit                                  |
 | `apps/api/src/tunda/pdp.test.ts`                | What goes out, and what comes back that this console will act on                                                             |
 | `apps/api/src/tunda/index-resource.ts`          | An index's classification, read from this console's own metadata and never from a request                                    |
+| `apps/api/src/tunda/refresh-claim.test.ts`      | Eight concurrent claims, one winner — asserted against a real database, because that is where the exclusion lives            |
 | `apps/api/src/tunda/no-local-authority.test.ts` | The central property, asserted: table shapes, sealed columns, the size of the authentication surface                         |
 | `apps/api/src/tunda/id-token.test.ts`           | Thirteen tokens this console refuses, each named for the check it fails                                                      |
 | `apps/api/src/middleware/require-machine.ts`    | Bearer → verified producer, on the ingest paths only                                                                         |

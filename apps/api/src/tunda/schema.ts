@@ -119,6 +119,33 @@ export const consoleSession = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 		lastUsedAt: timestamp('last_used_at', { withTimezone: true }).defaultNow().notNull(),
 
+		/**
+		 * When a request claimed the right to refresh this session, if one holds it.
+		 *
+		 * ## Why a claim and not a lock
+		 *
+		 * Tunda rotates refresh tokens and revokes the whole family when a consumed
+		 * one is presented again — correctly, because it cannot tell the legitimate
+		 * client from the thief. So two concurrent refreshes of one session sign the
+		 * user out.
+		 *
+		 * That was documented here as a narrow window worth accepting. It is not
+		 * narrow: the access token lives five minutes, the refresh fires at
+		 * T−60s, and a browser loading a page issues several requests at once. Every
+		 * page load near the boundary is a coin toss.
+		 *
+		 * A row lock would serialise it, and it would be held across an HTTP call to
+		 * Tunda — a database connection pinned to network latency, on every request
+		 * near the boundary. This is the same exclusion without that: one conditional
+		 * `UPDATE` claims the refresh, and the request that loses the race does not
+		 * wait on a lock, it waits on this column changing.
+		 *
+		 * Stale claims expire. A process that dies mid-refresh would otherwise hold
+		 * the claim forever and the session could never refresh again — which is a
+		 * worse outcome than the reuse this prevents.
+		 */
+		refreshingAt: timestamp('refreshing_at', { withTimezone: true }),
+
 		/** Never extended. An idle timeout that can be refreshed forever is not a bound. */
 		absoluteExpiresAt: timestamp('absolute_expires_at', { withTimezone: true }).notNull(),
 

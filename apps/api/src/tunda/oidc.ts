@@ -176,14 +176,14 @@ export async function completeFlow(
 	const issuer = theIssuer();
 	const verifier = await open(transaction.pkceVerifierEnc);
 
-	const tokens = await exchange(
+	const tokens = await verifyExchange(
 		issuer,
-		{
+		await post(issuer, {
 			grant_type: 'authorization_code',
 			code,
 			code_verifier: verifier,
 			redirect_uri: issuer.redirectUri
-		},
+		}),
 		// The reason the nonce was hashed and stored in the first place. Until this
 		// argument existed the column was written on every sign-in and read by
 		// nothing, which is the shape a replay defence takes when it is absent.
@@ -194,15 +194,56 @@ export async function completeFlow(
 }
 
 /**
+ * What a refresh attempt produced.
+ *
+ * Three outcomes rather than a value and an exception, because the middle one has
+ * no natural exception shape: Tunda answered, rotated the family, and returned
+ * something this console cannot use. The rotation happened whether or not the
+ * response verified, and the caller has to record it — a spent token left in the
+ * row is presented again on the next request, and Tunda revokes the whole family
+ * as reuse.
+ */
+export type RefreshResult =
+	| { readonly status: 'rotated'; readonly tokens: TundaTokens }
+	| {
+			readonly status: 'unverifiable';
+			/** The successor, if one came back. Must be stored even though the rest is unusable. */
+			readonly refreshToken: string | undefined;
+			readonly reason: string;
+	  };
+
+/**
  * Exchanges a refresh token for its successor.
  *
  * Tunda rotates refresh tokens and revokes the whole family on reuse, so the
- * caller must serialize refreshes per session — two concurrent presentations of
- * one token is exactly the pattern that revokes it.
+ * caller must hold the session's refresh claim before calling this — two
+ * concurrent presentations of one token is exactly the pattern that revokes it.
+ * See `claimRefresh`.
+ *
+ * Throws {@link GrantRejected} when Tunda refused the grant, which is
+ * authoritative: the family is revoked or the token is spent, and the session is
+ * over. Throws {@link FlowRejected} when Tunda could not be reached, which is
+ * not — the session survives on the token it already holds.
  */
-export async function refresh(refreshToken: string): Promise<TundaTokens> {
+export async function refresh(refreshToken: string): Promise<RefreshResult> {
 	const issuer = theIssuer();
-	return exchange(issuer, { grant_type: 'refresh_token', refresh_token: refreshToken });
+	const payload = await post(issuer, {
+		grant_type: 'refresh_token',
+		refresh_token: refreshToken
+	});
+
+	try {
+		return { status: 'rotated', tokens: await verifyExchange(issuer, payload) };
+	} catch (err) {
+		// Deliberately not rethrown. The rotation already happened at Tunda, and the
+		// caller's first job is to record the successor; deciding what an unusable
+		// response means comes after that.
+		return {
+			status: 'unverifiable',
+			refreshToken: payload.refresh_token,
+			reason: err instanceof Error ? err.message : 'verification failed'
+		};
+	}
 }
 
 /** Whether a failure was Tunda refusing the grant, as opposed to being unreachable. */
@@ -213,11 +254,22 @@ export class GrantRejected extends Error {
 	}
 }
 
-async function exchange(
-	issuer: TundaIssuer,
-	body: Record<string, string>,
-	nonceHash?: Buffer
-): Promise<TundaTokens> {
+/** The token endpoint's response, unverified. */
+type TokenResponse = {
+	access_token?: string;
+	refresh_token?: string;
+	id_token?: string;
+};
+
+/**
+ * Posts to the token endpoint and returns what came back, verifying nothing.
+ *
+ * Split from the verification so a refresh can record the rotation that already
+ * happened even when the response turns out to be unusable. Nothing downstream
+ * may treat this as trusted: it is a parsed body, and every claim in it is
+ * checked by `verifyExchange` before anything reads one.
+ */
+async function post(issuer: TundaIssuer, body: Record<string, string>): Promise<TokenResponse> {
 	// The internal address, not the public issuer: this is a back-channel call.
 	// `authorizeUrl` above deliberately uses the public one, because that is a URL
 	// a person's browser has to resolve.
@@ -243,12 +295,21 @@ async function exchange(
 		throw new FlowRejected(`token endpoint returned ${response.status}`);
 	}
 
-	const payload = (await response.json()) as {
-		access_token?: string;
-		refresh_token?: string;
-		id_token?: string;
-	};
+	return (await response.json()) as TokenResponse;
+}
 
+/**
+ * Verifies a token response, or throws.
+ *
+ * Every check lives here so both grant types get the same ones. A sign-in that
+ * cannot be verified must fail outright; a refresh that cannot be verified is
+ * handled differently by its caller, but not by skipping anything.
+ */
+async function verifyExchange(
+	issuer: TundaIssuer,
+	payload: TokenResponse,
+	nonceHash?: Buffer
+): Promise<TundaTokens> {
 	if (typeof payload.access_token !== 'string') {
 		throw new FlowRejected('token response carried no access token');
 	}

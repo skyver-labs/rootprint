@@ -1,0 +1,23 @@
+-- Exactly one request per session may refresh it.
+--
+-- Tunda rotates refresh tokens and revokes the whole family when a consumed one
+-- is presented again — correctly, because it cannot tell the legitimate client
+-- from the thief. So two concurrent refreshes of one session sign the user out.
+--
+-- That was documented in the code as a narrow window worth accepting. It is not
+-- narrow: the access token lives five minutes, the refresh fires at T-60s, and a
+-- browser loading a page issues several requests at once. Every page load near
+-- the boundary was a coin toss, and losing it ended the session.
+--
+-- A row lock would serialise it and would be held across an HTTP call to Tunda —
+-- a database connection pinned to network latency on every request near the
+-- boundary. This column is the same exclusion without that: one conditional
+-- UPDATE claims the refresh, and the request that loses does not wait on a lock,
+-- it waits on this column changing.
+--
+-- Nullable, because "nobody is refreshing" is the normal state. A claim goes
+-- stale after thirty seconds so that a process dying mid-refresh cannot block
+-- this session's refreshes forever — a session that can never refresh again is a
+-- worse failure than the reuse the claim prevents.
+
+ALTER TABLE "console_session" ADD COLUMN "refreshing_at" timestamp with time zone;
