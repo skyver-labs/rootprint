@@ -42,9 +42,20 @@
 
 	let openFields = $state<Set<string>>(new Set());
 	let pinnedFields = $state<Set<string>>(new Set());
+	// `session.principalId`, not `session.user.id`.
+	//
+	// `user` was Better Auth's shape and left with it; the session this console
+	// exposes is a Tunda subject and has no nested object. The optional chain
+	// stopped at `session` and not at `user`, so on a signed-in page — where
+	// `session` is present and `user` is not — this threw "Cannot read properties
+	// of undefined (reading 'id')" and took the whole field panel with it.
+	//
+	// It survived the identity replacement because nothing reached it: the
+	// explorer never got as far as rendering a field panel until the effect that
+	// drives it stopped returning early.
 	const pinStorageKey = $derived(
-		page.data.session?.user.id && selectedIndex
-			? `rootprint:fields-pinned:${page.data.session.user.id}:${selectedIndex}`
+		page.data.session?.principalId && selectedIndex
+			? `rootprint:fields-pinned:${page.data.session.principalId}:${selectedIndex}`
 			: null
 	);
 

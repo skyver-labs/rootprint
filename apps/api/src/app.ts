@@ -15,6 +15,7 @@ import { QuickwitError } from 'quickwit-js';
 import { config } from './config.js';
 import type { AppEnv, AuthedEnv } from './env.js';
 import { connectDb, db, runMigrations } from './lib/db.js';
+import { warmPdp } from './tunda/pdp.js';
 import { logger } from './lib/logger.js';
 import { probeQuickwit, quickwit } from './lib/quickwit.js';
 import { isApiPath, requestLogging } from './middleware/request-logging.js';
@@ -224,6 +225,12 @@ async function main(): Promise<void> {
 	await connectDb();
 	await runMigrations();
 	await probeQuickwit();
+
+	// Opens the connection to the policy decision point before the first operator
+	// needs it. The authorization deadline is 250ms and a cold HTTP/2 connection
+	// does not fit inside one — see `warmPdp`. Not awaited for correctness, only
+	// for ordering: every decision fails closed whether this succeeded or not.
+	await warmPdp();
 
 	const statsCollector = startStatsCollector(db, quickwit);
 

@@ -192,6 +192,62 @@ function pdp(): Client<typeof AuthorizationService> {
 }
 
 /**
+ * Opens the connection to the PDP before anybody depends on it.
+ *
+ * ## Why this is not premature optimisation
+ *
+ * Because the deadline is 250ms and the *first* call pays for an HTTP/2
+ * connection on top of the decision. Measured in the development stack: every
+ * warm call landed between 23ms and 84ms, and the first one after a console start
+ * took 299ms — refused, with the operator who happened to load the first page
+ * getting a 403 on a permission they hold.
+ *
+ * Failing closed there is correct and the outcome is still wrong: a console that
+ * refuses one request after every deploy trains people to reload rather than to
+ * believe a refusal. The fix is to stop making the first real request pay, not to
+ * lengthen a deadline that is right for every request after it.
+ *
+ * ## Why the answer is discarded
+ *
+ * The question is a real one — a `list` against a resource that does not exist —
+ * and the answer is meaningless either way. What matters is that a connection is
+ * open and the code path is warm by the time an operator's request arrives. A
+ * failure here is logged and otherwise ignored: the PDP being down at boot is not
+ * a reason to refuse to start, because it may be up by the time anybody signs in,
+ * and every decision until then fails closed on its own.
+ */
+export async function warmPdp(): Promise<void> {
+	const started = performance.now();
+	try {
+		await pdp().check(
+			{
+				tenant: { tenantId: 'tnt_00000000000000000000000000' },
+				subject: { subjectId: 'usr_00000000000000000000000000', subjectType: 'user' },
+				action: 'list',
+				resource: { type: 'observability_index', attributes: {} },
+				assurance: { level: 'urn:tunda:aal:0', methods: [] }
+			},
+			// Deliberately longer than DEADLINE_MS. This call is the one paying the
+			// connection cost, and timing it out would leave the next one to pay it
+			// instead — which is the situation this exists to remove.
+			{ timeoutMs: 5_000 }
+		);
+	} catch (err) {
+		// Includes the refusals: an unknown tenant is a NOT_FOUND, which is a
+		// perfectly good sign that the PDP is reachable and answering.
+		logger.info(
+			{ reason: err instanceof ConnectError ? Code[err.code] : 'unknown' },
+			'policy decision point reached at boot'
+		);
+		return;
+	}
+	logger.info(
+		{ durationMs: Math.round(performance.now() - started) },
+		'policy decision point reached at boot'
+	);
+}
+
+/**
  * Replaces the client, or resets it. Tests only.
  *
  * Present so the two properties that matter can be asserted without a live node:

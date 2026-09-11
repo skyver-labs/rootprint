@@ -18,7 +18,19 @@
 		onOpenAsSearch: () => void;
 	} = $props();
 
-	const isAdmin = $derived(page.data.session?.user?.role === 'admin');
+	// The link is shown to everyone, and the page behind it decides.
+	//
+	// This read `session.user.role === 'admin'` — a local role column, which is the
+	// second authority this fork exists to remove. It had been silently false since
+	// that column was dropped, so the link had simply stopped appearing for
+	// everybody, which is why nobody noticed.
+	//
+	// Not reinstated against something else. A client-side gate never protected
+	// anything: `/settings/indexes/{id}` authorizes its own requests against
+	// Tunda, and an operator who may not configure the index is refused there. All
+	// a gate here can do is avoid offering a screen somebody cannot use, and doing
+	// that correctly means asking the PDP — one round trip per rendered drawer, to
+	// hide one icon.
 
 	function toggle(field: string): void {
 		onChange(selected.includes(field) ? selected.filter((f) => f !== field) : [...selected, field]);
@@ -72,16 +84,14 @@
 	{/each}
 
 	<div class="ml-auto flex items-center gap-1">
-		{#if isAdmin}
-			<a
-				href="/settings/indexes/{indexId}"
-				class="btn btn-ghost btn-xs btn-square"
-				title="Configure context fields"
-				aria-label="Configure context fields"
-			>
-				<Settings2 class="h-3.5 w-3.5" />
-			</a>
-		{/if}
+		<a
+			href="/settings/indexes/{indexId}"
+			class="btn btn-ghost btn-xs btn-square"
+			title="Configure context fields"
+			aria-label="Configure context fields"
+		>
+			<Settings2 class="h-3.5 w-3.5" />
+		</a>
 		<button
 			type="button"
 			class="btn btn-ghost btn-xs btn-square"
