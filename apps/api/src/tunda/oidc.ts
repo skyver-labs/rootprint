@@ -2,7 +2,9 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import { db } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
+import { clientAssertion } from './client-assertion.js';
 import { constantTimeEquals, digest, open, randomToken, seal } from './crypto.js';
+import { verifyIdToken, type SubjectProfile } from './id-token.js';
 import { theIssuer, type TundaIssuer } from './issuers.js';
 import { consoleAuthTransaction } from './schema.js';
 import { verifyHumanToken, type VerifiedHumanToken } from './human-token.js';
@@ -42,6 +44,16 @@ export type TundaTokens = {
 	readonly refreshToken?: string;
 	readonly idToken?: string;
 	readonly verified: VerifiedHumanToken;
+
+	/**
+	 * What the ID token said about the person, once it was verified.
+	 *
+	 * Empty when the grant carried no ID token — a refresh may or may not return
+	 * one, and OIDC Core §12.2 leaves that to the server. Never partially trusted:
+	 * either `verifyIdToken` passed every check and this is its result, or the
+	 * whole exchange was refused.
+	 */
+	readonly profile: SubjectProfile;
 };
 
 export class FlowRejected extends Error {
@@ -164,12 +176,19 @@ export async function completeFlow(
 	const issuer = theIssuer();
 	const verifier = await open(transaction.pkceVerifierEnc);
 
-	const tokens = await exchange(issuer, {
-		grant_type: 'authorization_code',
-		code,
-		code_verifier: verifier,
-		redirect_uri: issuer.redirectUri
-	});
+	const tokens = await exchange(
+		issuer,
+		{
+			grant_type: 'authorization_code',
+			code,
+			code_verifier: verifier,
+			redirect_uri: issuer.redirectUri
+		},
+		// The reason the nonce was hashed and stored in the first place. Until this
+		// argument existed the column was written on every sign-in and read by
+		// nothing, which is the shape a replay defence takes when it is absent.
+		transaction.nonceHash
+	);
 
 	return { tokens, nextPath: transaction.nextPath, stepUp: transaction.stepUp };
 }
@@ -194,20 +213,22 @@ export class GrantRejected extends Error {
 	}
 }
 
-async function exchange(issuer: TundaIssuer, body: Record<string, string>): Promise<TundaTokens> {
+async function exchange(
+	issuer: TundaIssuer,
+	body: Record<string, string>,
+	nonceHash?: Buffer
+): Promise<TundaTokens> {
 	// The internal address, not the public issuer: this is a back-channel call.
 	// `authorizeUrl` above deliberately uses the public one, because that is a URL
 	// a person's browser has to resolve.
+	// A freshly signed assertion per request, in the body — not a secret in a
+	// Basic header. See `client-assertion.ts`: nothing reusable crosses the wire,
+	// so capturing this exchange buys an attacker one expired, already-spent
+	// credential.
 	const response = await fetch(`${issuer.internalIssuer}/oauth2/token`, {
 		method: 'POST',
-		headers: {
-			'content-type': 'application/x-www-form-urlencoded',
-			// RFC 6749 §2.3.1 requires both halves form-urlencoded before base64.
-			authorization: `Basic ${Buffer.from(
-				`${encodeURIComponent(issuer.clientId)}:${encodeURIComponent(issuer.clientSecret)}`
-			).toString('base64')}`
-		},
-		body: new URLSearchParams(body).toString()
+		headers: { 'content-type': 'application/x-www-form-urlencoded' },
+		body: new URLSearchParams({ ...body, ...(await clientAssertion(issuer)) }).toString()
 	});
 
 	if (!response.ok) {
@@ -232,11 +253,31 @@ async function exchange(issuer: TundaIssuer, body: Record<string, string>): Prom
 		throw new FlowRejected('token response carried no access token');
 	}
 
+	const verified = await verifyHumanToken(payload.access_token);
+
+	// Verified against the access token that arrived with it, not on its own. The
+	// two are checked as a pair — `at_hash`, `sub` and `sid` — so an ID token
+	// describing a different authentication cannot name the person this session is
+	// about to be created for.
+	//
+	// A rejection fails the whole exchange rather than yielding a session without a
+	// name. A check that is skipped when it fails is not a check.
+	const profile =
+		typeof payload.id_token === 'string'
+			? await verifyIdToken(payload.id_token, issuer, {
+					nonceHash,
+					accessToken: payload.access_token,
+					subject: verified.subject,
+					sessionId: verified.sessionId
+				})
+			: {};
+
 	return {
 		accessToken: payload.access_token,
 		refreshToken: payload.refresh_token,
 		idToken: payload.id_token,
-		verified: await verifyHumanToken(payload.access_token)
+		verified,
+		profile
 	};
 }
 

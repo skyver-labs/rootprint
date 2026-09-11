@@ -34,6 +34,7 @@ import type { ApiErrorBody } from './types.js';
 import { HttpError } from './utils/http-error.js';
 import { quickwitErrorToHttp } from './utils/quickwit-error.js';
 import { Code, otlpError, otlpErrorFromHttpError } from './utils/otlp-response.js';
+import { verifySigningKey } from './tunda/client-assertion.js';
 import { verifyEnvelopeKey } from './tunda/crypto.js';
 import { initIssuers } from './tunda/issuers.js';
 import { startStatsCollector } from './services/index-stats.service.js';
@@ -214,6 +215,11 @@ async function main(): Promise<void> {
 	// the first callback, which is what a lazily-read key produces.
 	initIssuers();
 	await verifyEnvelopeKey();
+	// The client signing key too. Without this the first failure is a sign-in that
+	// gets all the way to the token exchange and dies there — after the person has
+	// already authenticated with Tunda, which is the worst moment to discover a
+	// configuration error.
+	await verifySigningKey();
 
 	await connectDb();
 	await runMigrations();

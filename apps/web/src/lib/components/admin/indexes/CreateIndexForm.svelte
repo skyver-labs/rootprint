@@ -7,7 +7,7 @@
 	import { issuesToPathErrors, toFormErrors } from '$lib/api/errors';
 	import { createIndex } from '$lib/api/indexes';
 	import SettingsRow from '$lib/components/ui/SettingsRow.svelte';
-	import { createIndexSchema, INDEX_MODES } from 'api/schemas';
+	import { createIndexSchema, ENVIRONMENTS, INDEX_MODES } from 'api/schemas';
 	import DynamicMappingFields from './DynamicMappingFields.svelte';
 	import FieldMappingsEditor from './FieldMappingsEditor.svelte';
 	import { emptyIndexForm, formToCreateInput } from './index-form';
@@ -72,6 +72,88 @@
 				class="input input-sm w-full font-mono"
 				class:input-error={invalid}
 				placeholder="app-logs"
+				autocomplete="off"
+				aria-invalid={invalid ? 'true' : undefined}
+				aria-describedby={describedBy}
+			/>
+		{/snippet}
+	</SettingsRow>
+
+	<!--
+		Classification and environment sit directly under the index id, above every
+		Quickwit setting, because they are the only two fields on this form that
+		decide who may read what ends up here. Everything below is about how the
+		index stores documents; these two are about who sees them.
+
+		No preselected value. A default classification is one somebody accepts
+		without reading — and the answer depends on what the index is for, which is
+		a thing only the person creating it knows.
+	-->
+	<SettingsRow
+		id="idx-classification"
+		label="Classification"
+		hint="Decides who may search this index. An index with none cannot be searched at all."
+		error={fieldErrors.classification}
+	>
+		{#snippet children({ id, invalid, describedBy })}
+			<select
+				{id}
+				bind:value={form.classification}
+				class="select select-sm w-full"
+				class:select-error={invalid}
+				aria-invalid={invalid ? 'true' : undefined}
+				aria-describedby={describedBy}
+			>
+				<option value="" disabled>Choose…</option>
+				<option value="NONE">NONE — nothing personal. Build logs, platform diagnostics.</option>
+				<option value="INTERNAL"
+					>INTERNAL — identifiers and request paths, nothing a customer typed.</option
+				>
+				<option value="PII">PII — personal data. Searchable only with masking.</option>
+				<option value="RESTRICTED"
+					>RESTRICTED — regulated. No role reaches it without a named grant.</option
+				>
+			</select>
+		{/snippet}
+	</SettingsRow>
+
+	<SettingsRow
+		id="idx-environment"
+		label="Environment"
+		hint="Separate from classification: one is what is in the index, the other is whose day it ruins."
+		error={fieldErrors.environment}
+	>
+		{#snippet children({ id, invalid, describedBy })}
+			<select
+				{id}
+				bind:value={form.environment}
+				class="select select-sm w-full"
+				class:select-error={invalid}
+				aria-invalid={invalid ? 'true' : undefined}
+				aria-describedby={describedBy}
+			>
+				<option value="" disabled>Choose…</option>
+				{#each ENVIRONMENTS as env (env)}
+					<option value={env}>{env}</option>
+				{/each}
+			</select>
+		{/snippet}
+	</SettingsRow>
+
+	<SettingsRow
+		id="idx-owning-service"
+		label="Owning service"
+		hint="Optional. Which service writes here — the first thing an investigation asks."
+		error={fieldErrors.owningService}
+	>
+		{#snippet children({ id, invalid, describedBy })}
+			<input
+				{id}
+				type="text"
+				bind:value={form.owningService}
+				class="input input-sm w-full font-mono"
+				class:input-error={invalid}
+				placeholder="payments-api"
 				autocomplete="off"
 				aria-invalid={invalid ? 'true' : undefined}
 				aria-describedby={describedBy}

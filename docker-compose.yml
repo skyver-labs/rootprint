@@ -29,7 +29,11 @@ services:
       # disagree with.
       - TUNDA_ISSUER=https://id.example.com/t/tnt_REPLACE_ME
       - TUNDA_CLIENT_ID=observability-console
-      - TUNDA_CLIENT_SECRET=replace-me
+      # private_key_jwt (ADR 0036's preferred method). This console holds no
+      # shared secret: it signs a fresh, single-use assertion per back-channel
+      # call and Tunda holds only the public half of the key.
+      - TUNDA_CLIENT_KEY_ID=console-key-1
+      - TUNDA_CLIENT_PRIVATE_KEY=<PKCS#8 PEM, one line with \n or a mounted file>
       - TUNDA_AUDIENCE=https://observability.example.com
       - TUNDA_REDIRECT_URI=http://localhost:8282/api/auth/callback
 

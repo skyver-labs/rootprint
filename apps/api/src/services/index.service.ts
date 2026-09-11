@@ -227,6 +227,7 @@ export async function deleteIndex(db: Db, qw: QuickwitClient, indexId: string): 
 }
 
 export async function createIndex(
+	db: Db,
 	qw: QuickwitClient,
 	input: CreateIndexInput
 ): Promise<IndexSummary> {
@@ -242,6 +243,22 @@ export async function createIndex(
 		}
 		translateQuickwitError(err);
 	}
+
+	// The classification is written here and not left for a later settings save,
+	// because the authorization to create this index was granted against it. An
+	// index that was permitted as `INTERNAL` and then stored with no
+	// classification would be one nobody can read — the operator answered the
+	// question and the answer was discarded.
+	//
+	// After Quickwit, deliberately. A settings row for an index that failed to be
+	// created is a row describing nothing, and it would make the retry look like a
+	// conflict with itself.
+	await db.insert(indexSettings).values({
+		indexId: input.indexId,
+		classification: input.classification,
+		environment: input.environment,
+		owningService: input.owningService ?? null
+	});
 
 	return toIndexSummary(input.indexId, DEFAULT_SETTINGS);
 }

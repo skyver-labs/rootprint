@@ -19,6 +19,8 @@ import { client } from './client';
 export type Session = {
 	principalId: string;
 	displayName: string | null;
+	/** The Tunda tenant this session belongs to. For saying whose plane you are looking at. */
+	tenantId: string;
 	/** The assurance Tunda proved, canonically `urn:tunda:aal:N`. For offering a step-up. */
 	acr: string;
 	/** How it was proven — `pwd`, `otp`, `hwk`. For telling somebody what they used. */

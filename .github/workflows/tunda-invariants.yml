@@ -72,6 +72,17 @@ jobs:
             exit 1
           fi
 
+      - name: The console holds no client secret
+        run: |
+          # ADR 0036 prefers private_key_jwt and the console now uses it. A
+          # `TUNDA_CLIENT_SECRET` reappearing means somebody added a fallback —
+          # and a fallback to a shared secret is the shared secret, because an
+          # attacker picks which one to use.
+          if grep -rn --exclude='*.test.ts' "TUNDA_CLIENT_SECRET" apps/*/src 2>/dev/null; then
+            echo "::error::the console is reading a client secret again. It authenticates with a signed assertion."
+            exit 1
+          fi
+
       - name: No password hashing anywhere
         run: |
           # This console verifies no credential. A password hasher appearing here

@@ -99,15 +99,21 @@ a change nobody decided.
 | `apps/api/src/tunda/issuers.ts`                 | The closed set of trusted Tunda issuers, per-tenant config, JWKS cache                                                       |
 | `apps/api/src/tunda/human-token.ts`             | ES256 verification: pinned algorithm, exact issuer, audience, bounded skew, required claims                                  |
 | `apps/api/src/tunda/oidc.ts`                    | Auth transactions, PKCE, code exchange, serialized refresh                                                                   |
+| `apps/api/src/tunda/id-token.ts`                | ID token verification: the nonce this console stores and used not to check, `at_hash`, and the `name` claim `profile` grants |
 | `apps/api/src/tunda/sessions.ts`                | The opaque `__Host-` session, envelope-encrypted token custody                                                               |
 | `apps/api/src/tunda/crypto.ts`                  | SHA-256 for values only ever compared, AES-256-GCM envelope encryption for Tunda's tokens, one CSPRNG for every opaque value |
 | `apps/api/src/tunda/csrf.ts`                    | Origin and token checks for cookie-authenticated writes                                                                      |
 | `apps/api/src/tunda/schema.ts`                  | `console_principal`, `console_session`, `console_auth_transaction`                                                           |
 | `apps/api/src/middleware/require-session.ts`    | Cookie → session → token freshness                                                                                           |
 | `apps/api/src/tunda/machine-token.ts`           | A producer's `client_credentials` token: signed destinations, per-signal scopes, no session                                  |
+| `apps/api/src/tunda/client-assertion.ts`        | private_key_jwt: a fresh, single-use signed assertion per back-channel call, instead of a shared secret                      |
+| `apps/api/src/tunda/pdp.ts`                     | The PDP client: 250ms deadline, no roles sent, fail closed on everything but a clean permit                                  |
+| `apps/api/src/tunda/pdp.test.ts`                | What goes out, and what comes back that this console will act on                                                             |
+| `apps/api/src/tunda/index-resource.ts`          | An index's classification, read from this console's own metadata and never from a request                                    |
 | `apps/api/src/tunda/no-local-authority.test.ts` | The central property, asserted: table shapes, sealed columns, the size of the authentication surface                         |
+| `apps/api/src/tunda/id-token.test.ts`           | Thirteen tokens this console refuses, each named for the check it fails                                                      |
 | `apps/api/src/middleware/require-machine.ts`    | Bearer → verified producer, on the ingest paths only                                                                         |
-| `apps/api/src/middleware/authorize.ts`          | Phase 1: authenticated is authorized, stated as such. Phase 2: the PDP call                                                  |
+| `apps/api/src/middleware/authorize.ts`          | Every decision is one Check against Tunda's PDP. No roles on the wire; obligations honoured or refused                       |
 | `apps/api/src/routes/ingest/destination.ts`     | The header a producer picks among the destinations its token already grants                                                  |
 | `apps/api/src/drizzle/0022`, `0023`             | `console_*` created and every local identity table dropped, including the secrets in `app_settings`                          |
 | `apps/web/src/lib/api/session.ts`               | What the browser knows about who is signed in — for rendering, and for nothing else                                          |
@@ -165,20 +171,30 @@ tokens and no plaintext, and that `/api/auth` has five routes and no wildcard.
 
 ---
 
-## What Phase 1 does not do
+## What Phase 2 does not do
 
-**Authorization is binary.** `middleware/authorize.ts` grants every authenticated
-principal, and says so at length in its own header. That replaced
-`session.user.role !== 'admin'` — a comparison against a column this console
-owned — and it is a smaller surface than upstream's only because there is now no
-way to become an operator without Tunda.
+**Nothing is masked, and that is why some permits are refused.**
+`CheckResponse.obligations` must be enforced or the permit is a denial, and this
+console enforces exactly one type: `AUDIT`. So a permit carrying `MASK_FIELDS` —
+"this operator may search the PII index provided these fields are redacted" — is
+refused here, because nothing redacts a field and returning those rows would
+return the data the policy said to remove. Same for `FILTER_RESULTS`, and for
+`REQUIRE_DUAL_APPROVAL` on deleting an index.
 
-It is still not fine-grained, and a production release does not ship with it.
-Phase 2 replaces the body with a `Check` against
-`tunda.internal.v1.AuthorizationService`, carrying the subject, action, resource
-and assurance from the verified token and no roles at all. The signature already
-takes the action and the resource so that the change lands in one function rather
-than at every call site.
+That is the correct behaviour and it is also a gap: searching a PII index is a
+thing the policy permits and this console cannot do. Phase 3 builds the masking,
+at every egress rather than only the document list — a field still visible in a
+facet count or an exported CSV is not masked — and each one gets its own test.
+
+**Step-up is reported, not driven.** A `CHALLENGE` comes back as
+`STEP_UP_REQUIRED` with the assurance the policy wants, and `/api/auth/step-up`
+exists to satisfy it. What does not exist is the browser-side flow that catches
+the refusal, completes the ceremony and retries the original request.
+
+**Existing indexes are unreadable until somebody classifies them.** `0024` adds
+`classification` with no default, on purpose: absence is what makes an
+unclassified index fail closed. Migration 0024's own header explains the choice at
+length. Two fields per index at `PATCH /api/indexes/:indexId`.
 
 **The migration is one-way.** `0022` deletes saved views, shares and display
 preferences whose owner was a local account, because a Better Auth `user` is not a

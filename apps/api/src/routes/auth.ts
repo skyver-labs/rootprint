@@ -89,7 +89,13 @@ export const authRouter = new Hono<AppEnv>()
 				c.req.query('code')
 			);
 
-			const principalId = await rememberPrincipal(tokens.verified, null);
+			// The display name comes from the verified ID token's `name` claim, which
+			// is what `profile` grants. It was `null` here for as long as this route
+			// has existed — partly because nobody had wired it, and partly because
+			// Tunda did not emit the claim at all despite advertising the scope. Both
+			// halves are now real, and an account with no display name still yields
+			// `undefined`, which stores as null and renders as the subject id.
+			const principalId = await rememberPrincipal(tokens.verified, tokens.profile.name ?? null);
 			const handle = await createSession(principalId, tokens.verified, tokens);
 
 			// The transaction cookie is cleared explicitly. Leaving it to expire would
@@ -189,6 +195,10 @@ export const authRouter = new Hono<AppEnv>()
 		return c.json({
 			principalId: session.principalId,
 			displayName: session.displayName,
+			// The tenant, so the console can say whose plane this is. Rendering
+			// only, like displayName: it grants nothing and is re-derived from a
+			// verified token on every request.
+			tenantId: session.tundaTenantId,
 			// What Tunda proved, relayed unchanged. The browser renders from it and
 			// decides nothing: every server call is authorized again.
 			acr: session.acr,
