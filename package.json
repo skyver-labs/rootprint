@@ -52,5 +52,6 @@
 	"overrides": {
 		"vite": "^8.1.4"
 	},
-	"packageManager": "bun@1.4.0"
+	"packageManager": "bun@1.4.0",
+	"dependencies": {}
 }
