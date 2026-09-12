@@ -30,8 +30,21 @@ export const SESSION_COOKIE = '__Host-rp_session';
 /** Ends a session that has been untouched this long. */
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
-/** Never extended. An idle timeout that can be refreshed forever is not a bound. */
-const ABSOLUTE_LIFETIME_MS = 12 * 60 * 60 * 1000;
+/**
+ * The longest a session here may live, whatever anybody does with it.
+ *
+ * Never extended: an idle timeout that can be refreshed forever is not a bound.
+ *
+ * Eight, not the twelve this said before. Twelve was never reachable — Tunda's own
+ * session is capped at eight by `AuthenticationParameters` on the node, and this
+ * console's session cannot outlive the grant it depends on. A refresh past that
+ * point is refused and the family revoked, so a twelve-hour row described four
+ * hours that could not happen.
+ *
+ * It is a maximum rather than a floor, and worth naming that way round: the
+ * platform's number is the ceiling, and a tenant may lower it and never raise it.
+ */
+const ABSOLUTE_LIFETIME_MS = 8 * 60 * 60 * 1000;
 
 /**
  * Refresh once the access token has less than this left.
