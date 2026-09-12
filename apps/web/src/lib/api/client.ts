@@ -1,6 +1,8 @@
 import { hc } from 'hono/client';
 import type { AppType } from 'api';
 
+import { isPublicPath, signInPath } from '$lib/auth/paths';
+
 /**
  * The API client, and the one thing it does beyond calling fetch.
  *
@@ -53,22 +55,20 @@ async function fetchWithSessionHandling(
 
 	// No window during a server-side render or a test, and already where a
 	// signed-out person belongs, or already on the way.
-	if (
-		typeof window === 'undefined' ||
-		redirecting ||
-		window.location.pathname.startsWith('/auth/')
-	) {
+	//
+	// `isPublicPath` rather than a second `startsWith('/auth/')`: the page this is
+	// about to navigate to is under `/auth`, so the check that stops it navigating
+	// away from there has to be the same check, not a copy of it that can drift.
+	if (typeof window === 'undefined' || redirecting || isPublicPath(window.location.pathname)) {
 		return response;
 	}
 
 	redirecting = true;
 
-	const next = encodeURIComponent(window.location.pathname + window.location.search);
-
 	// `location.assign`, not the client router. The session is gone, so every
 	// route's load would fail on its way through; a full load starts from a clean
 	// state with no stale data behind it.
-	window.location.assign(`/auth/sign-in?next=${next}`);
+	window.location.assign(signInPath(window.location.pathname + window.location.search));
 
 	return response;
 }

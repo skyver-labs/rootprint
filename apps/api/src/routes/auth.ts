@@ -119,10 +119,23 @@ export const authRouter = new Hono<AppEnv>()
 			c.header('set-cookie', `${TRANSACTION_COOKIE}=; ${COOKIE_ATTRIBUTES}; Max-Age=0`, {
 				append: true
 			});
-			return c.json(
-				{ error: { code: 'SIGN_IN_FAILED', message: 'Sign-in could not be completed.' } },
-				400
-			);
+
+			// A redirect to the sign-in page, not a 400 with a JSON body.
+			//
+			// This is reached in a top-level navigation — it is the OAuth redirect
+			// URI, so a browser is the only thing that ever arrives here. A JSON error
+			// body rendered as the whole page: `{"error":{"code":"SIGN_IN_FAILED"}}`
+			// on white, no console shell, no way back except the back button, which
+			// re-sends the spent code and produces the same page again.
+			//
+			// And the commonest cause is the least alarming one. The auth transaction
+			// lives ten minutes; somebody who opens the Tunda tab, goes to a meeting
+			// and comes back to finish has done nothing wrong and needs one sentence
+			// and a button, which is what `/auth/sign-in` now renders for `?error`.
+			//
+			// The reason code stays out of the URL for the same reason the body had
+			// only one: the browser is told that it failed, and the log is told why.
+			return c.redirect('/auth/sign-in?error=sign-in-failed', 302);
 		}
 	})
 
