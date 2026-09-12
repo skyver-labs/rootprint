@@ -1,4 +1,3 @@
-import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
 import { getSession } from '$lib/api/session';
 import { DEP } from '$lib/api/deps';
@@ -6,34 +5,33 @@ import { DEP } from '$lib/api/deps';
 export const ssr = false;
 export const prerender = false;
 
-/** Pages that render without a session: the only ones an anonymous visitor may see. */
-const PUBLIC_PATHS = ['/auth/signed-out', '/share/'];
-
-export const load: LayoutLoad = async ({ url, depends }) => {
+/**
+ * Who is signed in, asked once, for every page to read.
+ *
+ * ## This used to be the gate, and that is what made it loop
+ *
+ * It answered "no session" with a redirect to `/auth/sign-in`, and its list of
+ * pages that render without a session did not contain `/auth/sign-in`. So the
+ * redirect landed back here, which redirected again, ten times, until SvelteKit
+ * refused with "Redirect loop" — four session probes, four 401s, and a blank
+ * screen for somebody whose session had merely expired.
+ *
+ * The list was the bug, but a longer list is not the fix: it is a second
+ * description of the route tree, kept by hand, and it will disagree again the
+ * next time a page moves. The gate now lives on `(app)`, the group that actually
+ * requires a session, so the sign-in page is not behind it — not because it is
+ * listed as an exception, but because it is somewhere else.
+ *
+ * The bootstrap call this replaced asked whether a first administrator still
+ * needed creating — a question that only exists when the console owns accounts.
+ * It does not: an operator either exists in Tunda or is created there.
+ */
+export const load: LayoutLoad = async ({ depends }) => {
 	depends(DEP.session);
 
-	const session = await getSession();
-
-	// The bootstrap call this replaced asked whether a first administrator still
-	// needed creating — a question that only exists when the console owns accounts.
-	// It does not, so there is nothing to bootstrap: an operator either exists in
-	// Tunda or is created there.
-	if (session === null && !PUBLIC_PATHS.some((prefix) => url.pathname.startsWith(prefix))) {
-		// To a page, not to `/api/auth/login`.
-		//
-		// Redirecting straight at the authorization endpoint sent somebody whose
-		// session had just expired into an OAuth flow with no explanation — a blank
-		// screen, a bounce through Tunda, and, when anything went wrong in between,
-		// a layout rendering with no session. "Cannot read properties of null
-		// (reading 'session')" was that, every time.
-		//
-		// `/auth/sign-in` is an ordinary route this router can reach, so the
-		// navigation is a navigation rather than a full-page load into an endpoint
-		// that answers with a 302. The flow still leaves this origin — from a link
-		// on that page, in a top-level window, which is what a WebAuthn ceremony
-		// needs.
-		redirect(303, `/auth/sign-in?next=${encodeURIComponent(url.pathname + url.search)}`);
-	}
-
-	return { session };
+	// No try/catch: `getSession` already distinguishes the two answers. A 401 is
+	// `null`, which is an ordinary answer; a 5xx throws, and bubbling it to
+	// `+error.svelte` is right. Signing somebody out because the probe blipped
+	// would send them through an authentication they did not need.
+	return { session: await getSession() };
 };

@@ -348,6 +348,12 @@ async function verifyExchange(
  * Rejects a scheme, a protocol-relative `//host`, and the backslash form some
  * browsers normalise into one. Each of those is an absolute URL wearing the shape
  * of a path.
+ *
+ * And rejects `/auth/…`, which is not a security property but a correctness one:
+ * those are the pages that exist for somebody with no session, and a completed
+ * sign-in that returns to one has returned the user to being told to sign in. The
+ * SPA collapses it too — this is the copy that holds when the parameter arrives
+ * from somewhere the SPA did not write.
  */
 export function safeNextPath(candidate: string | undefined): string {
 	if (!candidate || !candidate.startsWith('/')) {
@@ -357,6 +363,9 @@ export function safeNextPath(candidate: string | undefined): string {
 		return '/';
 	}
 	if (/^\/[a-z][a-z0-9+.-]*:/i.test(candidate)) {
+		return '/';
+	}
+	if (candidate === '/auth' || candidate.startsWith('/auth/')) {
 		return '/';
 	}
 	return candidate;

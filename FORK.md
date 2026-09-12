@@ -80,7 +80,8 @@ a change nobody decided.
 | `apps/api/src/routes/auth.ts` — `setup-admin`, `verify-invite`, `setup-password`, `providers`, and the Better Auth wildcard | `apps/api/src/routes/auth.ts` — `login`, `callback`, `logout`, `session` | Five authentication paths outside Tunda                                                              |
 | `apps/api/src/routes/api-keys.ts`, `service-accounts.ts`                                                                    | —                                                                        | Console-issued credentials                                                                           |
 | `apps/web/src/lib/auth-client.ts`                                                                                           | —                                                                        | Better Auth browser SDK                                                                              |
-| `apps/web/src/routes/auth/{sign-in,setup,setup-admin}`                                                                      | `apps/web/src/routes/auth/signed-out`                                    | Sign-in screens. Tunda renders its own                                                               |
+| `apps/web/src/routes/auth/{setup,setup-admin}`                                                                              | —                                                                        | First-admin bootstrap and invite redemption. An operator exists in Tunda or is created there         |
+| The contents of `apps/web/src/routes/auth/sign-in`                                                                          | `apps/web/src/routes/auth/sign-in`, rewritten                            | The credential form. The route is back — what is on it is one anchor tag to Tunda                    |
 | `apps/web/src/routes/(app)/settings/(admin)/authentication/**`                                                              | —                                                                        | Google and GitHub provider configuration                                                             |
 | `apps/web/src/lib/components/admin/authentication/**`                                                                       | —                                                                        | ditto                                                                                                |
 | `apps/api/src/routes/settings.ts`, `services/settings.service.ts`                                                           | —                                                                        | Google and GitHub OAuth provider configuration. The whole router was this                            |
@@ -118,31 +119,37 @@ a change nobody decided.
 | `apps/api/src/routes/ingest/destination.ts`     | The header a producer picks among the destinations its token already grants                                                  |
 | `apps/api/src/drizzle/0022`, `0023`             | `console_*` created and every local identity table dropped, including the secrets in `app_settings`                          |
 | `apps/web/src/lib/api/session.ts`               | What the browser knows about who is signed in — for rendering, and for nothing else                                          |
-| `apps/web/src/routes/auth/signed-out/`          | The one page left under `/auth`                                                                                              |
+| `apps/web/src/routes/auth/signed-out/`          | The signed-out confirmation                                                                                                  |
+| `apps/web/src/routes/auth/sign-in/`             | A sentence and a link to Tunda's authorization endpoint. No field, no form, no credential                                    |
+| `apps/web/src/lib/auth/paths.ts`                | One definition of "public", one of the sign-in URL. Two copies that disagreed are what made the console redirect-loop        |
 | `.github/workflows/tunda-publish.yml`           | The fork's GHCR image, gated on the invariants so a failing check publishes nothing                                          |
 | `.github/workflows/tunda-upstream-sync.yml`     | Opens a PR per upstream release, resolving what this register calls mechanical and naming what is not                        |
 
 ### Changed in place — and why each was unavoidable
 
-| Path                                                    | Change                                                                                                               |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Path                                                    | Change                                                                                                               |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/app.ts`                                   | Route table and boot sequence. Cannot be replaced wholesale without diverging from every upstream route addition     |
-| `apps/api/package.json`                                 | Dependency removal                                                                                                   |
-| `apps/api/src/config.ts`                                | `environment`, which a producer token's destinations are scoped to                                                   |
-| `apps/api/src/db/schema.ts`                             | Ownership foreign keys repointed from `user.id` to `console_principal.id`                                            |
-| `apps/api/src/routes/ingest/{ndjson,otlp}.ts`           | The destination comes from the signed token rather than from a key row                                               |
-| `apps/api/src/services/search-audit.service.ts`         | The actor is a Tunda principal; the `token` arm is read-only history                                                 |
-| `apps/api/src/services/search-activity.service.ts`      | Actor labels come from `console_principal.display_name`, not from an email                                           |
-| `apps/api/src/lib/openapi/spec.ts`                      | One bearer scheme, for producers. The cookie is `__Host-rp_session`                                                  |
-| `apps/web/src/routes/+layout.ts`                        | Session lookup and the sign-in redirect. There is no first-admin bootstrap to ask about                              |
-| `apps/web/src/lib/settings-nav.ts`                      | Five destinations removed; `adminOnly` removed with the role it read                                                 |
-| `apps/web/.../send-telemetry/**`                        | The wizard shows a placeholder token and explains where a real one comes from                                        |
-| `README.md`                                             | The banner, and the two sections that told people to create an admin account and mint an ingest key                  |
-| `docker-compose.yml`, `.env.example`                    | The Tunda variables, all required; the Better Auth ones removed                                                      |
-| `apps/api/src/app.ts` — boot order                      | Configuration is validated before the database, so a missing variable names itself                                   |
-| `.github/workflows/tunda-invariants.yml`                | Also `workflow_call`, so the publish workflow can gate on it                                                         |
+| Path                                                    | Change                                                                                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Path                                                    | Change                                                                                                                   |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------     |
+| `apps/api/src/app.ts`                                   | Route table and boot sequence. Cannot be replaced wholesale without diverging from every upstream route addition         |
+| `apps/api/package.json`                                 | Dependency removal                                                                                                       |
+| `apps/api/src/config.ts`                                | `environment`, which a producer token's destinations are scoped to                                                       |
+| `apps/api/src/db/schema.ts`                             | Ownership foreign keys repointed from `user.id` to `console_principal.id`                                                |
+| `apps/api/src/routes/ingest/{ndjson,otlp}.ts`           | The destination comes from the signed token rather than from a key row                                                   |
+| `apps/api/src/services/search-audit.service.ts`         | The actor is a Tunda principal; the `token` arm is read-only history                                                     |
+| `apps/api/src/services/search-activity.service.ts`      | Actor labels come from `console_principal.display_name`, not from an email                                               |
+| `apps/api/src/lib/openapi/spec.ts`                      | One bearer scheme, for producers. The cookie is `__Host-rp_session`                                                      |
+| `apps/web/src/routes/+layout.ts`                        | Session lookup, and only that. There is no first-admin bootstrap to ask about                                            |
+| `apps/web/src/routes/(app)/+layout.ts`                  | The session gate, moved here from the root layout so the sign-in page sits outside it rather than being exempted from it |
+| `apps/web/src/routes/auth/+layout.ts`                   | A signed-in visitor goes to their `next` rather than always `/`                                                          |
+| `apps/web/src/lib/api/client.ts`                        | A 401 mid-page navigates to the sign-in page, through the same helper the gate uses                                      |
+| `apps/api/src/routes/auth.ts` — the callback's failure  | A redirect to `/auth/sign-in?error=…`, not a JSON body rendered as the whole page in a top-level navigation              |
+| `apps/web/src/lib/settings-nav.ts`                      | Five destinations removed; `adminOnly` removed with the role it read                                                     |
+| `apps/web/.../send-telemetry/**`                        | The wizard shows a placeholder token and explains where a real one comes from                                            |
+| `README.md`                                             | The banner, and the two sections that told people to create an admin account and mint an ingest key                      |
+| `docker-compose.yml`, `.env.example`                    | The Tunda variables, all required; the Better Auth ones removed                                                          |
+| `apps/api/src/app.ts` — boot order                      | Configuration is validated before the database, so a missing variable names itself                                       |
+| `.github/workflows/tunda-invariants.yml`                | Also `workflow_call`, so the publish workflow can gate on it                                                             |
 
 ---
 
